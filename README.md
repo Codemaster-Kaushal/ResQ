@@ -30,6 +30,13 @@ starts the API on <http://127.0.0.1:8000>.
 | <http://127.0.0.1:8000/health> | Liveness + database status |
 | <http://127.0.0.1:8000/> | Service metadata |
 
+Load the demo dataset (safe to re-run — it inserts only what is missing):
+
+```bash
+./scripts/seed.sh              # or: python -m seed.seed
+./scripts/seed.sh --reset      # wipe seeded data and rebuild it
+```
+
 Run the tests:
 
 ```bash
@@ -56,8 +63,8 @@ acceptance criteria pass.
 | Phase | Outcome | Status |
 |---|---|---|
 | 1 | Project skeleton, config, DB, health check | ✅ Done |
-| 2 | Data model, migrations, seed dataset | ⬜ Next |
-| 3 | Report ingestion + media storage | ⬜ |
+| 2 | Data model, migrations, seed dataset | ✅ Done |
+| 3 | Report ingestion + media storage | ⬜ Next |
 | 4 | Triage engine (classification + severity) | ⬜ |
 | 5 | Authenticity and trust scoring | ⬜ |
 | 6 | Priority queue with ageing and override | ⬜ |
@@ -120,6 +127,44 @@ Key ones:
 
 ---
 
+## The demo dataset
+
+`seed/` builds 40 reports across 4 Bengaluru zones (Koramangala, Whitefield, Hebbal, Jayanagar)
+and 8 responders. Twelve reports are **deliberate fixtures** — each one exists so a later phase's
+acceptance criterion has something real to detect:
+
+| Fixture | Exists so that |
+|---|---|
+| `dup-image-a` / `dup-image-b` | Two reporters forward one photograph → Phase 5 `DUPLICATE_IMAGE` |
+| `stale-timestamp` | Client clock 8 h before receipt → Phase 5 `STALE_REPORT` |
+| `corroborated-1/2/3` | Three independent reports, 254 m and 18 min apart → Phase 5 `CORROBORATED` |
+| `null-island` | Coordinates (0, 0) → Phase 5 `GEO_IMPLAUSIBLE` |
+| `impossible-move-a/b` | One pseudonym, 851 km apart, 6 min → Phase 5 `IMPOSSIBLE_MOVEMENT` |
+| `low-information` | Text "help" → Phase 5 `LOW_INFORMATION` |
+| `latest-critical` | Worst incident, newest timestamp → Phase 6 severity must beat FIFO |
+| `aged-low-severity` | Minor incident waiting 4 h → Phase 6 ageing prevents starvation |
+
+Responder placement is equally deliberate: `Structural Crew Echo` is the *nearest* unit to the
+Koramangala incidents but has the wrong skill, `Medical Unit Hotel` starts at capacity, and
+`Rescue Team Golf` starts offline — so Phase 7's candidate filter has real cases to exclude.
+
+Two properties the seed guarantees, and re-checks on every run:
+
+- **Idempotent.** Every row's UUID is derived from its fixture key, so a second run finds the same
+  primary keys and inserts nothing.
+- **Self-verifying.** After writing, it re-measures its own fixtures — pHash distance of the
+  duplicate pair, the corroboration radius and window, the stale gap — and exits non-zero if any
+  no longer holds. A seed that has quietly stopped exercising a later phase is worse than no seed.
+
+Images are generated procedurally rather than committed as binaries, so the repository stays
+text-only and the perceptual hashes are identical on every machine.
+
+**Reports are seeded unscored**, at status `received`. Phases 4 and 5 compute severity and
+authenticity; pre-filling them would make those phases' acceptance criteria pass without the
+engines doing any work.
+
+---
+
 ## Layout
 
 ```
@@ -129,15 +174,30 @@ backend/
 │  ├─ config.py      Env-driven settings (TRD §9)
 │  ├─ db.py          Engine, session dependency, health probe
 │  ├─ api/           Routers
-│  ├─ core/          Error envelope, structured logging
-│  ├─ models/        SQLModel tables            (Phase 2)
+│  ├─ core/          Error envelope, logging, time, geo
+│  ├─ models/        Report, Responder, Assignment, ProcessEvent
 │  ├─ schemas/       Request/response models    (Phase 3)
 │  ├─ services/      Triage, authenticity, priority, dispatch, mining
 │  └─ ai/            Providers + never-raising fallback router (Phase 4)
-├─ seed/             Idempotent demo data       (Phase 2)
+├─ seed/             Idempotent, self-verifying demo data
+│  ├─ seed.py
+│  ├─ images.py      Procedural seed imagery
+│  └─ fixtures/      Zones, responders, the 40 report specs
 ├─ tests/
-└─ scripts/          dev.sh, test.sh
+└─ scripts/          dev.sh, test.sh, seed.sh
 ```
+
+### Conventions worth knowing
+
+- **All datetimes are naive UTC.** SQLite's DATETIME has no timezone slot, so a tz-aware value
+  returns naive and comparisons blow up mid-calculation. `app/core/time.py` normalises at the
+  boundary; client offsets are applied and dropped on the way in.
+- **Enums store their lowercase value**, not the Python member name, so the database and the API
+  JSON agree. See `app/models/columns.py`.
+- **`ProcessEvent` is append-only** and is the single source of truth for lifecycle timings —
+  `Assignment` deliberately does not duplicate the en-route/on-scene milestones.
+- The model modules avoid `from __future__ import annotations`: SQLModel resolves relationships
+  from runtime annotations and cannot follow deferred ones.
 
 ---
 
