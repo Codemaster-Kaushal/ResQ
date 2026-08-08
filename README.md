@@ -65,8 +65,8 @@ acceptance criteria pass.
 | 1 | Project skeleton, config, DB, health check | ✅ Done |
 | 2 | Data model, migrations, seed dataset | ✅ Done |
 | 3 | Report ingestion + media storage | ✅ Done |
-| 4 | Triage engine (classification + severity) | ⬜ Next |
-| 5 | Authenticity and trust scoring | ⬜ |
+| 4 | Triage engine (classification + severity) | ✅ Done |
+| 5 | Authenticity and trust scoring | ⬜ Next |
 | 6 | Priority queue with ageing and override | ⬜ |
 | 7 | Dispatch and assignment engine | ⬜ |
 | 8 | Responder status lifecycle | ⬜ |
@@ -168,6 +168,61 @@ Key ones:
 
 ---
 
+## Triage and severity
+
+Every report is scored 0–100 and **every score is explained**. A score with no reason codes is a
+failed requirement (FR-8), so each contributing component appends its own:
+
+```
+severity = clamp(incident_weight + life_risk + people_affected
+                 + vulnerability + image_modifier, 0, 100)
+```
+
+```json
+{
+  "severity_score": 78,
+  "incident_type": "trapped_persons",
+  "scoring_provider": "local",
+  "severity_reasons": [
+    { "code": "INCIDENT_TRAPPED_PERSONS", "weight": 40, "source": "taxonomy" },
+    { "code": "LIFE_RISK_TRAPPED",        "weight": 12, "source": "text" },
+    { "code": "LIFE_RISK_NO_EXIT",        "weight":  8, "source": "text" },
+    { "code": "PEOPLE_AFFECTED_6_20",     "weight": 12, "source": "text" },
+    { "code": "VULNERABILITY_CHILDREN",   "weight":  6, "source": "text" }
+  ]
+}
+```
+
+The reason weights **sum to the score**, always. Capping and clamping append their own reasons
+rather than silently swallowing the difference — otherwise "explainable" would be decorative. The
+seed re-checks this invariant on every run.
+
+### The provider chain
+
+`AI_PROVIDER_ORDER` is tried in order, each with a timeout and one retry:
+
+| Provider | Role |
+|---|---|
+| `gemini` | Google Gemini Flash — the only free tier with vision, so the only one that can judge an image |
+| `groq` | Very fast, text only. Any visual modifier it returns is discarded as unfounded |
+| `local` | Deterministic rules. No network, no key, always available — **always last, never optional** |
+
+**The router never raises.** A rate limit, a timeout, a malformed response, or a bug inside a
+provider all degrade to the local scorer rather than cost a report its score. With no API keys
+configured the remote providers are skipped instantly, so the default setup runs entirely offline
+and demo day never waits on a quota.
+
+Providers extract *signals only* — never a score. Weighting lives in `services/triage.py`, so the
+arithmetic is identical whichever provider answered and swapping models cannot quietly change how
+severe an incident is judged to be. Terms a model invents are dropped: an unknown term has no
+defensible weight, and inventing one would put an unexplainable number into the score.
+
+**Ingestion never blocks on scoring.** The POST response returns with status `received`; triage
+runs afterwards as a background task and advances the report to `classified`. Anything left
+unscored stays visible to `triage_pending()`, which is the retry queue FR-4 promises.
+
+---
+
 ## The demo dataset
 
 `seed/` builds 40 reports across 4 Bengaluru zones (Koramangala, Whitefield, Hebbal, Jayanagar)
@@ -200,9 +255,13 @@ Two properties the seed guarantees, and re-checks on every run:
 Images are generated procedurally rather than committed as binaries, so the repository stays
 text-only and the perceptual hashes are identical on every machine.
 
-**Reports are seeded unscored**, at status `received`. Phases 4 and 5 compute severity and
-authenticity; pre-filling them would make those phases' acceptance criteria pass without the
-engines doing any work.
+**Scores are never seeded directly.** The seed writes raw reports, then runs them through the same
+triage path ingestion uses, so a green seed run is real evidence the engine works. Authenticity and
+priority stay empty until Phases 5 and 6 fill them the same way.
+
+Verified offline: with the network namespace disconnected *and* API keys configured — so Gemini and
+Groq are genuinely attempted and genuinely fail — a full re-seed still scores all 40 reports in
+about three seconds, every one with `scoring_provider: "local"`.
 
 ---
 
@@ -218,8 +277,8 @@ backend/
 │  ├─ core/          Error envelope, logging, time, geo
 │  ├─ models/        Report, Responder, Assignment, ProcessEvent
 │  ├─ schemas/       Request/response models
-│  ├─ services/      media.py; triage, authenticity, priority, dispatch, mining to come
-│  └─ ai/            Providers + never-raising fallback router (Phase 4)
+│  ├─ services/      media.py, triage.py; authenticity, priority, dispatch, mining to come
+│  └─ ai/            base, local, gemini, groq, prompt, parsing, router
 ├─ seed/             Idempotent, self-verifying demo data
 │  ├─ seed.py
 │  ├─ images.py      Procedural seed imagery

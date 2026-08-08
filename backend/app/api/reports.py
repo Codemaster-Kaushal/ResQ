@@ -6,7 +6,17 @@ import uuid
 from datetime import datetime
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, File, Form, Query, Response, UploadFile, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    Form,
+    Query,
+    Response,
+    UploadFile,
+    status,
+)
 from sqlalchemy import func
 from sqlmodel import Session, select
 
@@ -26,6 +36,7 @@ from app.schemas.report import (
     ReportSummary,
 )
 from app.services.media import read_exif_from_path, store_image_bytes
+from app.services.triage import triage_report
 
 logger = get_logger(__name__)
 
@@ -115,6 +126,7 @@ def _parse_bbox(raw: str | None) -> tuple[float, float, float, float] | None:
 )
 async def create_report(
     response: Response,
+    background: BackgroundTasks,
     # Declared field by field rather than as a single Form model: alongside a File
     # parameter FastAPI stops flattening the model and starts expecting a form field
     # named after it. Spelled out, the constraints also produce accurate error
@@ -198,6 +210,10 @@ async def create_report(
             "lng": report.lng,
         },
     )
+
+    # Scoring runs after the response is sent. The report is already durable, so a slow
+    # or unavailable model delays its score without ever costing it (FR-4, NFR-1).
+    background.add_task(triage_report, report.id)
 
     return ReportCreated(
         id=report.id,

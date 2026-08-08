@@ -203,16 +203,36 @@ def test_aged_low_severity_report_has_been_waiting(seeded, session: Session) -> 
 # --- Dataset shape ----------------------------------------------------------------
 
 
-def test_reports_arrive_unscored_and_unqueued(seeded, session: Session) -> None:
-    """Phases 4 and 5 own the scores. Seeding them would make their acceptance
-    criteria pass without the engines doing anything."""
+def test_every_seeded_report_is_scored_and_explained(seeded, session: Session) -> None:
+    """Phase 4 acceptance: every seeded report has a severity score and non-empty
+    reasons. Scores are computed by the engine at seed time, never seeded directly."""
     for report in session.exec(select(Report)).all():
-        assert report.status == ReportStatus.RECEIVED
-        assert report.severity_score is None
+        assert report.status == ReportStatus.CLASSIFIED, report.idempotency_key
+        assert report.severity_score is not None, report.idempotency_key
+        assert 0 <= report.severity_score <= 100
+        assert report.severity_reasons, report.idempotency_key
+        assert report.incident_type is not None
+        assert report.scoring_provider == "local"
+
+        # Authenticity and priority remain Phase 5 and Phase 6's business.
         assert report.authenticity_score is None
-        assert report.severity_reasons == []
         assert report.authenticity_reasons == []
         assert report.priority_score is None
+
+
+def test_seeded_reasons_reconcile_with_their_scores(seeded, session: Session) -> None:
+    """A score you cannot add up from its reasons is not explained (FR-8)."""
+    for report in session.exec(select(Report)).all():
+        total = sum(item["weight"] for item in report.severity_reasons)
+        assert total == report.severity_score, report.idempotency_key
+
+
+def test_seeding_offline_still_scores_everything(seeded, session: Session) -> None:
+    """NFR-2: the seed run above had no API keys configured, so the remote providers
+    were skipped and the local scorer answered — which is the offline path exactly."""
+    providers = {r.scoring_provider for r in session.exec(select(Report)).all()}
+
+    assert providers == {"local"}
 
 
 def test_every_spec_reached_the_database(seeded, session: Session) -> None:

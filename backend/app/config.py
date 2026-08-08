@@ -48,6 +48,9 @@ class Settings(BaseSettings):
     gemini_api_key: str | None = None
     groq_api_key: str | None = None
     ai_timeout_seconds: float = 4.0
+    ai_retry_attempts: int = Field(default=1, ge=0, le=3)
+    gemini_model: str = "gemini-2.0-flash"
+    groq_model: str = "llama-3.3-70b-versatile"
 
     # --- Authenticity thresholds (Phase 5) ---
     authenticity_flag_threshold: int = Field(default=40, ge=0, le=100)

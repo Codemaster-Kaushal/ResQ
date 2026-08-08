@@ -17,6 +17,7 @@ silently stops exercising a later phase's acceptance criterion is worse than no 
 from __future__ import annotations
 
 import argparse
+import asyncio
 import sys
 import uuid
 from dataclasses import dataclass, field
@@ -32,6 +33,7 @@ from app.core.geo import haversine_m, offset_metres
 from app.core.time import minutes_between, utcnow
 from app.db import engine, ensure_storage_paths, init_db
 from app.models import Assignment, ProcessEvent, Report, Responder
+from app.services.triage import triage_pending
 from seed import images
 from seed.fixtures.reports import (
     EXPECTED_REPORT_COUNT,
@@ -67,6 +69,7 @@ class SeedSummary:
     responders_created: int = 0
     responders_existing: int = 0
     images_written: int = 0
+    reports_scored: int = 0
     checks: list[Check] = field(default_factory=list)
 
     @property
@@ -311,15 +314,58 @@ def _verify(session: Session, summary: SeedSummary) -> None:
     else:
         summary.add("impossible movement detectable", False, "pair missing")
 
-    # --- Unscored on arrival ---
-    scored = session.exec(select(Report).where(Report.severity_score.is_not(None))).all()  # type: ignore[union-attr]
+    # --- Every report scored, with reasons (Phase 4 acceptance) ---
+    all_reports = session.exec(select(Report)).all()
+    unscored = [r.idempotency_key for r in all_reports if r.severity_score is None]
     summary.add(
-        "reports arrive unscored",
-        not scored,
-        "no seeded severity scores — Phases 4/5 compute them"
-        if not scored
-        else f"{len(scored)} reports already carry a severity score",
+        "every report scored",
+        not unscored,
+        f"{len(all_reports) - len(unscored)}/{len(all_reports)} reports scored"
+        + ("" if not unscored else f"; missing: {', '.join(unscored[:3])}"),
     )
+
+    unexplained = [r.idempotency_key for r in all_reports if not r.severity_reasons]
+    summary.add(
+        "every score explained",
+        not unexplained,
+        "all scores carry reason codes (FR-8)"
+        if not unexplained
+        else f"{len(unexplained)} scores have no reasons",
+    )
+
+    # Reason weights must add up to the score, or "explainable" is only decorative.
+    mismatched = [
+        r.idempotency_key
+        for r in all_reports
+        if r.severity_score is not None
+        and sum(item.get("weight", 0) for item in r.severity_reasons) != r.severity_score
+    ]
+    summary.add(
+        "reasons sum to the score",
+        not mismatched,
+        "reason weights reconcile with every severity score"
+        if not mismatched
+        else f"mismatch on: {', '.join(mismatched[:3])}",
+    )
+
+    providers = {r.scoring_provider for r in all_reports if r.scoring_provider}
+    summary.add(
+        "scoring provider recorded",
+        bool(providers) and all(providers),
+        f"providers in use: {', '.join(sorted(providers)) or 'none'}",
+    )
+
+    # The demo hinges on this ordering (Phase 6): the newest report is also the worst.
+    critical = _by_key(session, "latest-critical")
+    aged = _by_key(session, "aged-low-severity")
+    if critical and aged and critical.severity_score and aged.severity_score:
+        summary.add(
+            "severity separates the fixtures",
+            critical.severity_score > aged.severity_score,
+            f"latest-critical {critical.severity_score} vs aged-low {aged.severity_score}",
+        )
+    else:
+        summary.add("severity separates the fixtures", False, "fixtures unscored")
 
 
 def run(reset: bool = False, echo: Callable[[str], None] = print) -> SeedSummary:
@@ -337,6 +383,14 @@ def run(reset: bool = False, echo: Callable[[str], None] = print) -> SeedSummary
         _seed_responders(session, summary)
         catalogue = _seed_images(summary)
         _seed_reports(session, catalogue, now, summary)
+
+    # Triage runs after the reports are committed, through exactly the same path
+    # ingestion uses. With no API keys configured the remote providers are skipped and
+    # the local scorer answers, so a re-seed with the network off still scores
+    # everything (Phase 4 acceptance, NFR-2).
+    summary.reports_scored = asyncio.run(triage_pending())
+
+    with Session(engine) as session:
         _verify(session, summary)
 
     _report(summary, echo)
@@ -349,6 +403,7 @@ def _report(summary: SeedSummary, echo: Callable[[str], None]) -> None:
     echo(f"  reports    {summary.reports_created:>3} created, {summary.reports_existing:>3} already present")
     echo(f"  responders {summary.responders_created:>3} created, {summary.responders_existing:>3} already present")
     echo(f"  images     {summary.images_written:>3} written to {settings.media_dir / SEED_IMAGE_DIR}")
+    echo(f"  triaged    {summary.reports_scored:>3} newly scored")
     echo("")
     echo("Fixture checks")
     for check in summary.checks:

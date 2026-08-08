@@ -359,17 +359,30 @@ def test_client_timestamp_is_preserved_separately_from_receipt(client: TestClien
 # --- Ingestion does not score ----------------------------------------------------------
 
 
-def test_ingestion_leaves_scoring_to_later_phases(client: TestClient) -> None:
-    """FR-4 and NFR-1: ingestion persists and returns; it never scores inline."""
-    report_id = post_report(client, idempotency_key="p3-unscored").json()["id"]
+def test_ingestion_returns_before_scoring(client: TestClient) -> None:
+    """FR-4 and NFR-1: the response is built before triage runs, not after it.
+
+    The body the client receives still says `received` — proof that ingestion did not
+    wait on the scorer. Triage then runs as a background task.
+    """
+    created = post_report(client, idempotency_key="p4-async").json()
+
+    assert created["status"] == ReportStatus.RECEIVED.value
+
+    detail = client.get(f"{ENDPOINT}/{created['id']}").json()
+    assert detail["status"] == ReportStatus.CLASSIFIED.value
+    assert detail["severity_score"] is not None
+    assert detail["severity_reasons"]
+    assert detail["scoring_provider"] == "local"
+
+
+def test_authenticity_is_still_left_to_phase_5(client: TestClient) -> None:
+    report_id = post_report(client, idempotency_key="p4-no-auth").json()["id"]
 
     detail = client.get(f"{ENDPOINT}/{report_id}").json()
 
-    assert detail["status"] == ReportStatus.RECEIVED.value
-    assert detail["severity_score"] is None
     assert detail["authenticity_score"] is None
-    assert detail["severity_reasons"] == []
-    assert detail["scoring_provider"] is None
+    assert detail["authenticity_reasons"] == []
 
 
 def test_ingestion_stays_inside_the_latency_budget(client: TestClient) -> None:
@@ -472,8 +485,9 @@ def test_list_filters_by_pseudonym(client: TestClient, listing_reports: str) -> 
 
 
 def test_list_filters_by_status(client: TestClient, listing_reports: str) -> None:
+    # Background triage has already advanced these from `received` to `classified`.
     body = client.get(
-        ENDPOINT, params={"reporter_pseudonym": listing_reports, "status": "received"}
+        ENDPOINT, params={"reporter_pseudonym": listing_reports, "status": "classified"}
     ).json()
     assert body["total"] == 3
 
