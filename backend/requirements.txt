@@ -1,0 +1,22 @@
+# RescueNet AI backend — runtime dependencies.
+# Full stack per TRD §1. Engineering rule: no new dependencies after Phase 9,
+# so packages needed by later phases are pinned here from the start.
+
+# --- Web framework ---
+fastapi>=0.115,<1.0
+uvicorn[standard]>=0.30,<1.0
+python-multipart>=0.0.9          # multipart report ingestion (Phase 3)
+
+# --- Data layer ---
+sqlmodel>=0.0.22,<0.1
+pydantic>=2.7,<3.0
+pydantic-settings>=2.3,<3.0
+alembic>=1.13,<2.0               # optional migrations; create_all is the Phase 1 path
+
+# --- Media / authenticity (Phases 3 & 5) ---
+Pillow>=10.3
+ImageHash>=4.3                   # pHash duplicate detection
+piexif>=1.1.3                    # EXIF geo-time consistency
+
+# --- HTTP client for AI providers (Phase 4) ---
+httpx>=0.27,<1.0
