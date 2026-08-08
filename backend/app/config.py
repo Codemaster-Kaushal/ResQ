@@ -40,6 +40,8 @@ class Settings(BaseSettings):
 
     # --- Media storage ---
     media_storage_path: str = "./media"
+    max_image_bytes: int = Field(default=10 * 1024 * 1024, gt=0)
+    allowed_image_types: str = "image/jpeg,image/png,image/webp"
 
     # --- AI providers (Phase 4) ---
     ai_provider_order: str = "gemini,groq,local"
@@ -83,6 +85,12 @@ class Settings(BaseSettings):
         if "local" not in chain:
             chain.append("local")  # the floor is never optional (TRD §5)
         return chain
+
+    @property
+    def allowed_image_type_set(self) -> frozenset[str]:
+        return frozenset(
+            t.strip().lower() for t in self.allowed_image_types.split(",") if t.strip()
+        )
 
     @property
     def cors_origin_list(self) -> list[str]:

@@ -64,8 +64,8 @@ acceptance criteria pass.
 |---|---|---|
 | 1 | Project skeleton, config, DB, health check | ✅ Done |
 | 2 | Data model, migrations, seed dataset | ✅ Done |
-| 3 | Report ingestion + media storage | ⬜ Next |
-| 4 | Triage engine (classification + severity) | ⬜ |
+| 3 | Report ingestion + media storage | ✅ Done |
+| 4 | Triage engine (classification + severity) | ⬜ Next |
 | 5 | Authenticity and trust scoring | ⬜ |
 | 6 | Priority queue with ageing and override | ⬜ |
 | 7 | Dispatch and assignment engine | ⬜ |
@@ -79,11 +79,50 @@ acceptance criteria pass.
 |---|---|---|
 | GET | `/` | Service metadata |
 | GET | `/health` | Liveness; 503 when the database is unreachable |
-| GET | `/api/_debug/boom` | Raises an unhandled exception (debug routes only) |
-| GET | `/api/_debug/app-error` | Raises a typed error (debug routes only) |
-| GET | `/api/_debug/service-unavailable` | Raises a 503 (debug routes only) |
+| POST | `/api/reports` | Submit a report (multipart; image optional) |
+| GET | `/api/reports` | Filterable list — status, type, bbox, pseudonym, image presence |
+| GET | `/api/reports/{id}` | Report detail with scores, reasons, and EXIF |
+| GET | `/api/_debug/*` | Deliberate-failure routes (debug routes only) |
 
 `/api/_debug/*` is mounted only when `ENABLE_DEBUG_ROUTES=true`. Set it to `false` in production.
+
+### Filing a report
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/reports \
+  -F "text=Bridge support has cracked, traffic still crossing" \
+  -F "lat=12.9352" -F "lng=77.6245" \
+  -F "idempotency_key=demo-1" \
+  -F "image=@photo.jpg;type=image/jpeg"
+```
+
+Only `text`, `lat`, and `lng` are required. `client_created_at`, `reporter_pseudonym`, and
+`idempotency_key` are filled in by the server when omitted — a report never requires an identity
+(NFR-7). Re-posting a key you have already used returns the original report with `duplicate: true`
+and HTTP 200, so a retry over a flaky connection is safe.
+
+`bbox` uses GeoJSON axis order — `min_lng,min_lat,max_lng,max_lat`:
+
+```bash
+curl "http://127.0.0.1:8000/api/reports?bbox=77.58,13.02,77.61,13.05&has_image=true"
+```
+
+### How images are handled
+
+Uploaded bytes are written **verbatim** — never re-encoded — so the EXIF that Phase 5's
+authenticity check depends on survives intact (FR-5). The perceptual hash is computed from the
+stored file, the same route Phase 5 will take.
+
+Three things the upload path does not trust: the declared content type (the file's magic bytes
+decide, and the stored extension follows the real format), the client-supplied filename (a
+traversal vector — the name on disk is always generated), and the file size (capped by
+`MAX_IMAGE_BYTES`). Corrupt or truncated images are rejected with `INVALID_IMAGE` before anything
+is written.
+
+Ingestion does image work inline because it is local, deterministic and takes single-digit
+milliseconds, and Phase 5 needs the hash to exist the moment the row does. It is *AI scoring* that
+ingestion must never block on (NFR-1) — reports land at status `received` and Phase 4 attaches
+triage as a background task.
 
 ---
 
@@ -120,6 +159,8 @@ Key ones:
 |---|---|---|
 | `DATABASE_URL` | `sqlite:///./rescuenet.db` | SQLite for demo; Postgres-compatible |
 | `LOG_FORMAT` | `json` | `json` or `console` |
+| `MAX_IMAGE_BYTES` | `10485760` | Upload size cap (10 MiB) |
+| `ALLOWED_IMAGE_TYPES` | `image/jpeg,image/png,image/webp` | Accepted upload types |
 | `ENABLE_DEBUG_ROUTES` | `true` | Mounts `/api/_debug/*` |
 | `AI_PROVIDER_ORDER` | `gemini,groq,local` | Fallback chain; `local` is always appended |
 | `AUTHENTICITY_FLAG_THRESHOLD` | `40` | Below this, a report is flagged for human review |
@@ -176,8 +217,8 @@ backend/
 │  ├─ api/           Routers
 │  ├─ core/          Error envelope, logging, time, geo
 │  ├─ models/        Report, Responder, Assignment, ProcessEvent
-│  ├─ schemas/       Request/response models    (Phase 3)
-│  ├─ services/      Triage, authenticity, priority, dispatch, mining
+│  ├─ schemas/       Request/response models
+│  ├─ services/      media.py; triage, authenticity, priority, dispatch, mining to come
 │  └─ ai/            Providers + never-raising fallback router (Phase 4)
 ├─ seed/             Idempotent, self-verifying demo data
 │  ├─ seed.py
