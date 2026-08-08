@@ -41,8 +41,12 @@ RESPONDER_SPECS: tuple[ResponderSpec, ...] = (
         name="Medical Unit Alpha",
         skill=ResponderSkill.MEDICAL,
         zone="KOR",
-        lat=12.9380,
-        lng=77.6290,
+        # Stationed on the far side of the zone, so Echo really is the nearest unit to
+        # the Koramangala incidents. Without that separation the "skill beats
+        # proximity" case cannot be demonstrated — the matched unit happens to be
+        # closest anyway and the test proves nothing.
+        lat=12.9410,
+        lng=77.6310,
         capacity=3,
         active_count=0,
         status=ResponderStatus.AVAILABLE,

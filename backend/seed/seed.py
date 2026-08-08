@@ -34,6 +34,7 @@ from app.core.time import minutes_between, utcnow
 from app.db import engine, ensure_storage_paths, init_db
 from app.models import Assignment, ProcessEvent, Report, ReportStatus, Responder
 from app.services.pipeline import process_pending
+from app.services.dispatch import find_candidates
 from app.services.priority import build_queue, compute_priority
 from seed import images
 from seed.fixtures.reports import (
@@ -509,6 +510,39 @@ def _verify(session: Session, summary: SeedSummary) -> None:
         )
     else:
         summary.add("ageing lifts a long-waiting report", False, "fixture missing")
+
+    # --- Dispatch fixtures (Phase 7 acceptance) ---
+    medical_kor = _by_key(session, "filler-03")
+    if medical_kor is not None:
+        candidates = find_candidates(session, medical_kor)
+        if candidates:
+            winner, winning_match = candidates[0]
+            nearest, nearest_match = min(candidates, key=lambda pair: pair[1].distance_km)
+            summary.add(
+                "skill match beats raw proximity",
+                winner.id != nearest.id
+                and winning_match.skill_component > nearest_match.skill_component,
+                f"{winner.name} ({winning_match.distance_km:.2f} km, "
+                f"score {winning_match.score}) beats nearest {nearest.name} "
+                f"({nearest_match.distance_km:.2f} km, score {nearest_match.score})",
+            )
+        else:
+            summary.add("skill match beats raw proximity", False, "no candidates found")
+    else:
+        summary.add("skill match beats raw proximity", False, "fixture missing")
+
+    # A unit at capacity or offline must never be offered, whatever the distance.
+    excluded = {"Medical Unit Hotel", "Rescue Team Golf"}
+    offered: set[str] = set()
+    for entry in build_queue(session)[:10]:
+        offered.update(responder.name for responder, _ in find_candidates(session, entry.report))
+    summary.add(
+        "unavailable responders are never offered",
+        not (offered & excluded),
+        "at-capacity and offline units excluded from every candidate list"
+        if not (offered & excluded)
+        else f"wrongly offered: {', '.join(sorted(offered & excluded))}",
+    )
 
     # The demo hinges on this ordering (Phase 6): the newest report is also the worst.
     critical = _by_key(session, "latest-critical")

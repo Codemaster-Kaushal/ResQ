@@ -75,6 +75,9 @@ class Settings(BaseSettings):
 
     # --- Dispatch (Phase 7) ---
     dispatch_max_radius_km: float = Field(default=25.0, gt=0)
+    dispatch_weight_distance: float = Field(default=0.5, ge=0, le=1)
+    dispatch_weight_skill: float = Field(default=0.3, ge=0, le=1)
+    dispatch_weight_load: float = Field(default=0.2, ge=0, le=1)
 
     # --- Process mining (Phase 9) ---
     bottleneck_deviation_ratio: float = Field(default=1.5, gt=0)

@@ -68,8 +68,8 @@ acceptance criteria pass.
 | 4 | Triage engine (classification + severity) | ✅ Done |
 | 5 | Authenticity and trust scoring | ✅ Done |
 | 6 | Priority queue with ageing and override | ✅ Done |
-| 7 | Dispatch and assignment engine | ⬜ Next |
-| 8 | Responder status lifecycle | ⬜ |
+| 7 | Dispatch and assignment engine | ✅ Done |
+| 8 | Responder status lifecycle | ⬜ Next |
 | 9 | Process event log, cycle-time mining, CSV export | ⬜ |
 | 10 | Offline batch sync, governance endpoint, hardening, deploy | ⬜ |
 
@@ -85,6 +85,7 @@ acceptance criteria pass.
 | POST | `/api/reports/{id}/review` | Human review of a flagged report — verify or reject |
 | GET | `/api/queue` | The ordered priority queue, with each score's components |
 | POST | `/api/queue/{id}/override` | Operator pin, demote, or clear — emits a process event |
+| POST | `/api/dispatch/assign` | Match the top of the queue (or a named report) to a responder |
 | GET | `/api/_debug/*` | Deliberate-failure routes (debug routes only) |
 
 `/api/_debug/*` is mounted only when `ENABLE_DEBUG_ROUTES=true`. Set it to `false` in production.
@@ -170,6 +171,7 @@ Key ones:
 | `PRIORITY_WEIGHT_SEVERITY` | `0.70` | Severity's share of the priority score |
 | `AGEING_RATE_PER_MINUTE` | `1.5` | How fast a waiting report climbs |
 | `DISPATCH_MAX_RADIUS_KM` | `25` | Responder search radius |
+| `DISPATCH_WEIGHT_DISTANCE` | `0.5` | Distance's share of the match score |
 
 ---
 
@@ -325,6 +327,44 @@ emission to every transition and adds the log API, CSV export, and bottleneck mi
 
 ---
 
+## Dispatch
+
+```
+candidates  = available AND active_count < capacity AND within 25 km
+match_score = 0.5*(1 - distance/25km) + 0.3*skill + 0.2*(1 - load)
+```
+
+The point is that **the best-fit responder is not the first free one** (G3). On the seeded data,
+a medical call in Koramangala goes to `Medical Unit Alpha` at 0.551 km rather than
+`Structural Crew Echo` 0.20 km *closer*:
+
+| responder | skill | distance | score |
+|---|---|---|---|
+| **Medical Unit Alpha** | medical (exact) | 0.551 km | **0.9890** |
+| Structural Crew Echo | structural (mismatch) | 0.352 km | 0.7530 |
+
+Skill is a weighted tiebreaker, not a veto: 0.3 of skill cannot outrun 0.5 of distance across the
+whole radius, so a matched unit 24 km away still loses to a compatible one next door.
+
+Dispatching until the fleet is full assigns **13 reports across 8 responders and then defers**, with
+nobody over capacity, `Medical Unit Hotel` (at capacity) and `Rescue Team Golf` (offline) never
+offered, and all 23 remaining reports still in the queue:
+
+```
+12. assigned seed-filler-19  -> Structural Crew Foxtrot (2/2)
+13. DEFERRED: No available responder within range has spare capacity
+```
+
+A deferred report **keeps its place and its accrued wait time** — nothing is dropped for want of a
+crew. Two deliberate choices here:
+
+- **Dispatch looks past an unplaceable head of queue.** If the worst report is somewhere no crew can
+  reach, the next one down still gets help rather than a crew idling.
+- **Only the head records a `DISPATCH_DEFERRED` event.** Logging one per report skipped would bury
+  the deferral that matters under three dozen identical events.
+
+---
+
 ## The demo dataset
 
 `seed/` builds 40 reports across 4 Bengaluru zones (Koramangala, Whitefield, Hebbal, Jayanagar)
@@ -384,7 +424,7 @@ backend/
 │  ├─ core/          Error envelope, logging, time, geo
 │  ├─ models/        Report, Responder, Assignment, ProcessEvent
 │  ├─ schemas/       Request/response models
-│  ├─ services/      media, triage, authenticity, priority, events, pipeline
+│  ├─ services/      media, triage, authenticity, priority, dispatch, events, pipeline
 │  └─ ai/            base, local, gemini, groq, prompt, parsing, router
 ├─ seed/             Idempotent, self-verifying demo data
 │  ├─ seed.py
