@@ -369,20 +369,13 @@ def test_ingestion_returns_before_scoring(client: TestClient) -> None:
 
     assert created["status"] == ReportStatus.RECEIVED.value
 
+    # The background pipeline runs triage and then authenticity, so by the time the
+    # report can be read it has been routed past `classified`.
     detail = client.get(f"{ENDPOINT}/{created['id']}").json()
-    assert detail["status"] == ReportStatus.CLASSIFIED.value
+    assert detail["status"] in {ReportStatus.VERIFIED.value, ReportStatus.FLAGGED.value}
     assert detail["severity_score"] is not None
     assert detail["severity_reasons"]
     assert detail["scoring_provider"] == "local"
-
-
-def test_authenticity_is_still_left_to_phase_5(client: TestClient) -> None:
-    report_id = post_report(client, idempotency_key="p4-no-auth").json()["id"]
-
-    detail = client.get(f"{ENDPOINT}/{report_id}").json()
-
-    assert detail["authenticity_score"] is None
-    assert detail["authenticity_reasons"] == []
 
 
 def test_ingestion_stays_inside_the_latency_budget(client: TestClient) -> None:
@@ -485,9 +478,9 @@ def test_list_filters_by_pseudonym(client: TestClient, listing_reports: str) -> 
 
 
 def test_list_filters_by_status(client: TestClient, listing_reports: str) -> None:
-    # Background triage has already advanced these from `received` to `classified`.
+    # The background pipeline has already advanced these past `received`.
     body = client.get(
-        ENDPOINT, params={"reporter_pseudonym": listing_reports, "status": "classified"}
+        ENDPOINT, params={"reporter_pseudonym": listing_reports, "status": "verified"}
     ).json()
     assert body["total"] == 3
 

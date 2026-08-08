@@ -32,8 +32,8 @@ from app.config import settings
 from app.core.geo import haversine_m, offset_metres
 from app.core.time import minutes_between, utcnow
 from app.db import engine, ensure_storage_paths, init_db
-from app.models import Assignment, ProcessEvent, Report, Responder
-from app.services.triage import triage_pending
+from app.models import Assignment, ProcessEvent, Report, ReportStatus, Responder
+from app.services.pipeline import process_pending
 from seed import images
 from seed.fixtures.reports import (
     EXPECTED_REPORT_COUNT,
@@ -70,6 +70,7 @@ class SeedSummary:
     responders_existing: int = 0
     images_written: int = 0
     reports_scored: int = 0
+    reports_assessed: int = 0
     checks: list[Check] = field(default_factory=list)
 
     @property
@@ -120,13 +121,32 @@ def _seed_responders(session: Session, summary: SeedSummary) -> None:
     session.commit()
 
 
-def _seed_images(summary: SeedSummary) -> dict[str, tuple[str, str]]:
+# Somewhere clearly not Bengaluru, for the deliberate EXIF mismatch.
+_MISMATCH_GPS = (28.6139, 77.2090)  # New Delhi
+
+
+def _seed_images(summary: SeedSummary, now: datetime) -> dict[str, tuple[str, str]]:
     """Write every referenced image. Returns {image_id: (relative_path, phash)}."""
     directory = settings.media_dir / SEED_IMAGE_DIR
     catalogue: dict[str, tuple[str, str]] = {}
 
-    for image_id in sorted({spec.image for spec in REPORT_SPECS if spec.image}):
-        path = images.write(image_id, directory)
+    specs_by_image = {spec.image: spec for spec in REPORT_SPECS if spec.image}
+
+    for image_id in sorted(specs_by_image):
+        spec = specs_by_image[image_id]
+
+        gps: tuple[float, float] | None = None
+        if spec.image_gps == "match":
+            gps = resolve_coordinates(spec)
+        elif spec.image_gps == "mismatch":
+            gps = _MISMATCH_GPS
+
+        path = images.write(
+            image_id,
+            directory,
+            gps=gps,
+            captured_at=now - timedelta(hours=spec.client_hours_ago),
+        )
         summary.images_written += 1
         relative = f"{SEED_IMAGE_DIR}/{path.name}"
         catalogue[image_id] = (relative, images.phash_of(path))
@@ -355,6 +375,104 @@ def _verify(session: Session, summary: SeedSummary) -> None:
         f"providers in use: {', '.join(sorted(providers)) or 'none'}",
     )
 
+    # --- Authenticity (Phase 5 acceptance) ---
+    unassessed = [r.idempotency_key for r in all_reports if r.authenticity_score is None]
+    summary.add(
+        "every report trust-scored",
+        not unassessed,
+        f"{len(all_reports) - len(unassessed)}/{len(all_reports)} reports assessed",
+    )
+
+    auth_mismatched = [
+        r.idempotency_key
+        for r in all_reports
+        if r.authenticity_score is not None
+        and sum(item.get("weight", 0) for item in r.authenticity_reasons) != r.authenticity_score
+    ]
+    summary.add(
+        "trust reasons sum to the score",
+        not auth_mismatched,
+        "authenticity reasons reconcile with every score"
+        if not auth_mismatched
+        else f"mismatch on: {', '.join(auth_mismatched[:3])}",
+    )
+
+    def _codes(report: Report | None) -> set[str]:
+        return {item["code"] for item in report.authenticity_reasons} if report else set()
+
+    dup_b = _by_key(session, "dup-image-b")
+    summary.add(
+        "duplicate image caught and flagged",
+        dup_b is not None
+        and "DUPLICATE_IMAGE" in _codes(dup_b)
+        and dup_b.status == ReportStatus.FLAGGED,
+        f"dup-image-b scored {dup_b.authenticity_score if dup_b else '?'} "
+        f"({dup_b.status.value if dup_b else 'missing'})",
+    )
+
+    # The original must not be punished for being first.
+    dup_a = _by_key(session, "dup-image-a")
+    summary.add(
+        "original of the pair not penalised",
+        dup_a is not None and "DUPLICATE_IMAGE" not in _codes(dup_a),
+        f"dup-image-a scored {dup_a.authenticity_score if dup_a else '?'} "
+        f"({dup_a.status.value if dup_a else 'missing'})",
+    )
+
+    stale_report = _by_key(session, "stale-timestamp")
+    summary.add(
+        "stale report loses trust",
+        stale_report is not None and "STALE_REPORT" in _codes(stale_report),
+        f"stale-timestamp scored {stale_report.authenticity_score if stale_report else '?'}",
+    )
+
+    cluster_scores = [
+        r.authenticity_score
+        for key in ("corroborated-1", "corroborated-2", "corroborated-3")
+        if (r := _by_key(session, key)) and r.authenticity_score is not None
+    ]
+    baseline_reports = [
+        r.authenticity_score
+        for r in all_reports
+        if r.authenticity_score is not None and not r.authenticity_reasons[1:]
+    ]
+    summary.add(
+        "corroborated cluster scores higher",
+        len(cluster_scores) == 3
+        and bool(baseline_reports)
+        and min(cluster_scores) > max(baseline_reports),
+        f"cluster {cluster_scores} vs uncorroborated baseline {max(baseline_reports, default=0)}",
+    )
+
+    exif_match = _by_key(session, "filler-08")
+    exif_mismatch = _by_key(session, "filler-10")
+    summary.add(
+        "EXIF consistency rewarded, mismatch not",
+        exif_match is not None
+        and "EXIF_CONSISTENT" in _codes(exif_match)
+        and exif_mismatch is not None
+        and "EXIF_CONSISTENT" not in _codes(exif_mismatch),
+        "matching EXIF GPS earns the bonus; out-of-town EXIF does not",
+    )
+
+    # FR-15 / TRD §10: no automated path may reject or delete a report.
+    rejected = [r.idempotency_key for r in all_reports if r.status == ReportStatus.REJECTED]
+    summary.add(
+        "nothing auto-rejected",
+        not rejected,
+        "no report rejected without a human decision"
+        if not rejected
+        else f"auto-rejected: {', '.join(rejected[:3])}",
+    )
+
+    flagged = [r for r in all_reports if r.status == ReportStatus.FLAGGED]
+    summary.add(
+        "review queue is populated",
+        bool(flagged),
+        f"{len(flagged)} flagged for human review: "
+        f"{', '.join(sorted(r.idempotency_key for r in flagged))}",
+    )
+
     # The demo hinges on this ordering (Phase 6): the newest report is also the worst.
     critical = _by_key(session, "latest-critical")
     aged = _by_key(session, "aged-low-severity")
@@ -381,14 +499,14 @@ def run(reset: bool = False, echo: Callable[[str], None] = print) -> SeedSummary
             echo("Wiped existing reports, responders, assignments and events.")
 
         _seed_responders(session, summary)
-        catalogue = _seed_images(summary)
+        catalogue = _seed_images(summary, now)
         _seed_reports(session, catalogue, now, summary)
 
-    # Triage runs after the reports are committed, through exactly the same path
-    # ingestion uses. With no API keys configured the remote providers are skipped and
-    # the local scorer answers, so a re-seed with the network off still scores
-    # everything (Phase 4 acceptance, NFR-2).
-    summary.reports_scored = asyncio.run(triage_pending())
+    # Scoring runs after the reports are committed, through exactly the same pipeline
+    # ingestion uses — triage, then authenticity. With no API keys configured the remote
+    # providers are skipped and the local scorer answers, so a re-seed with the network
+    # off still scores everything (Phase 4 acceptance, NFR-2).
+    summary.reports_scored, summary.reports_assessed = asyncio.run(process_pending())
 
     with Session(engine) as session:
         _verify(session, summary)
@@ -404,6 +522,7 @@ def _report(summary: SeedSummary, echo: Callable[[str], None]) -> None:
     echo(f"  responders {summary.responders_created:>3} created, {summary.responders_existing:>3} already present")
     echo(f"  images     {summary.images_written:>3} written to {settings.media_dir / SEED_IMAGE_DIR}")
     echo(f"  triaged    {summary.reports_scored:>3} newly scored")
+    echo(f"  assessed   {summary.reports_assessed:>3} newly authenticity-scored")
     echo("")
     echo("Fixture checks")
     for check in summary.checks:

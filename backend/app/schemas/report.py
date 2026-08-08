@@ -5,6 +5,7 @@ from __future__ import annotations
 import secrets
 import uuid
 from datetime import datetime
+from enum import Enum
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -172,3 +173,35 @@ class ReportPage(BaseModel):
     total: int = Field(description="Total matching the filters, ignoring pagination")
     limit: int
     offset: int
+
+
+class ReviewDecision(str, Enum):
+    VERIFY = "verify"
+    REJECT = "reject"
+
+
+class ReviewRequest(BaseModel):
+    """An operator resolving a flagged report (FR-15).
+
+    Rejection is only ever reachable through here. No automated path may reject a
+    report, so the reviewer's identity is required rather than optional — the
+    human-in-the-loop claim has to be evidenced in data (FR-30).
+    """
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    decision: ReviewDecision
+    reviewer: str = Field(
+        min_length=1, max_length=64, description="Operator identity, recorded with the decision"
+    )
+    note: str | None = Field(default=None, max_length=1000)
+
+
+class ReviewResult(BaseModel):
+    id: uuid.UUID
+    status: ReportStatus
+    decision: ReviewDecision
+    reviewer: str
+    note: str | None = None
+    authenticity_score: int | None = None
+    authenticity_reasons: list[dict[str, Any]] = Field(default_factory=list)

@@ -43,6 +43,9 @@ class ErrorCode:
     UNSUPPORTED_IMAGE_TYPE = "UNSUPPORTED_IMAGE_TYPE"
     INVALID_BBOX = "INVALID_BBOX"
 
+    # Phase 5 — authenticity and human review
+    REPORT_NOT_UNDER_REVIEW = "REPORT_NOT_UNDER_REVIEW"
+
 
 # Starlette raises bare HTTPExceptions for routing failures; map them onto our codes.
 _STATUS_TO_CODE = {

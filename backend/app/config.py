@@ -53,10 +53,18 @@ class Settings(BaseSettings):
     groq_model: str = "llama-3.3-70b-versatile"
 
     # --- Authenticity thresholds (Phase 5) ---
+    authenticity_baseline: int = Field(default=60, ge=0, le=100)
     authenticity_flag_threshold: int = Field(default=40, ge=0, le=100)
     phash_duplicate_distance: int = Field(default=8, ge=0, le=64)
     corroboration_radius_m: int = Field(default=500, gt=0)
     corroboration_window_min: int = Field(default=30, gt=0)
+    corroboration_min_reports: int = Field(default=2, ge=2)
+    corroboration_require_same_type: bool = True
+    stale_report_hours: float = Field(default=6.0, gt=0)
+    impossible_movement_km: float = Field(default=100.0, gt=0)
+    impossible_movement_window_min: float = Field(default=10.0, gt=0)
+    exif_match_radius_km: float = Field(default=1.0, gt=0)
+    low_information_max_tokens: int = Field(default=5, ge=1)
 
     # --- Dispatch (Phase 7) ---
     dispatch_max_radius_km: float = Field(default=25.0, gt=0)

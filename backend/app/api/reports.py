@@ -21,7 +21,13 @@ from sqlalchemy import func
 from sqlmodel import Session, select
 
 from app.config import settings
-from app.core.errors import ErrorCode, ErrorEnvelope, NotFoundError, ValidationFailedError
+from app.core.errors import (
+    ConflictError,
+    ErrorCode,
+    ErrorEnvelope,
+    NotFoundError,
+    ValidationFailedError,
+)
 from app.core.logging import get_logger
 from app.core.time import utcnow
 from app.db import get_session
@@ -34,9 +40,13 @@ from app.schemas.report import (
     ReportPage,
     ReportRead,
     ReportSummary,
+    ReviewDecision,
+    ReviewRequest,
+    ReviewResult,
 )
 from app.services.media import read_exif_from_path, store_image_bytes
-from app.services.triage import triage_report
+from app.services.pipeline import process_report
+from app.services.triage import reason
 
 logger = get_logger(__name__)
 
@@ -213,7 +223,7 @@ async def create_report(
 
     # Scoring runs after the response is sent. The report is already durable, so a slow
     # or unavailable model delays its score without ever costing it (FR-4, NFR-1).
-    background.add_task(triage_report, report.id)
+    background.add_task(process_report, report.id)
 
     return ReportCreated(
         id=report.id,
@@ -292,6 +302,85 @@ def list_reports(
         items.append(summary)
 
     return ReportPage(items=items, total=total, limit=limit, offset=offset)
+
+
+@router.post(
+    "/{report_id}/review",
+    response_model=ReviewResult,
+    summary="Resolve a flagged report (human review)",
+    responses={
+        404: {"model": ErrorEnvelope},
+        409: {"model": ErrorEnvelope, "description": "Report is not awaiting review"},
+        422: {"model": ErrorEnvelope},
+    },
+)
+def review_report(
+    report_id: uuid.UUID,
+    payload: ReviewRequest,
+    session: Session = Depends(get_session),
+) -> ReviewResult:
+    """Verify or reject a report that automated scoring sent to review.
+
+    This is the **only** path to `rejected` (FR-15). Automated scoring can lower a
+    report's trust and route it here, but it can never discard it: during a
+    mass-casualty event the cost of silently dropping one true report far exceeds the
+    cost of a human glancing at a false one.
+
+    The decision and the operator's identity are written onto the report, so the
+    human-in-the-loop claim is evidenced in data rather than only in the pitch (FR-30).
+    Phase 9 will additionally emit this as a process event.
+    """
+    report = session.get(Report, report_id)
+    if report is None:
+        raise NotFoundError(
+            "No report exists with that id",
+            code=ErrorCode.REPORT_NOT_FOUND,
+            detail={"report_id": str(report_id)},
+        )
+
+    if report.status != ReportStatus.FLAGGED:
+        raise ConflictError(
+            "Only a flagged report can be reviewed",
+            code=ErrorCode.REPORT_NOT_UNDER_REVIEW,
+            detail={"report_id": str(report_id), "status": report.status.value},
+        )
+
+    verified = payload.decision == ReviewDecision.VERIFY
+    report.status = ReportStatus.VERIFIED if verified else ReportStatus.REJECTED
+
+    # Weight 0: this records who decided, without moving the computed score.
+    entry = reason(
+        "HUMAN_REVIEW_VERIFIED" if verified else "HUMAN_REVIEW_REJECTED",
+        0,
+        f"operator:{payload.reviewer}",
+    )
+    if payload.note:
+        entry["note"] = payload.note
+    report.authenticity_reasons = [*report.authenticity_reasons, entry]
+
+    session.add(report)
+    session.commit()
+    session.refresh(report)
+
+    logger.info(
+        "flagged report reviewed",
+        extra={
+            "report_id": str(report_id),
+            "decision": payload.decision.value,
+            "reviewer": payload.reviewer,
+            "status": report.status.value,
+        },
+    )
+
+    return ReviewResult(
+        id=report.id,
+        status=report.status,
+        decision=payload.decision,
+        reviewer=payload.reviewer,
+        note=payload.note,
+        authenticity_score=report.authenticity_score,
+        authenticity_reasons=report.authenticity_reasons,
+    )
 
 
 @router.get(

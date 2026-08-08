@@ -35,6 +35,12 @@ class ReportSpec:
     received_hours_ago: float | None = None
 
     image: str | None = None
+
+    # EXIF GPS written into the photograph: "match" places it at the reported
+    # coordinates (Phase 5 EXIF_CONSISTENT, +10), "mismatch" places it in another city
+    # so the bonus is correctly withheld. None writes no EXIF at all.
+    image_gps: str | None = None
+
     purpose: str = ""
 
     @property
@@ -46,8 +52,11 @@ DELIBERATE_SPECS: tuple[ReportSpec, ...] = (
     ReportSpec(
         key="dup-image-a",
         zone="KOR",
-        north_m=120,
-        east_m=-80,
+        # Deliberately offset ~900 m from the other Koramangala reports. The fixture
+        # exists to demonstrate duplicate detection, so it must not accidentally sit
+        # inside another report's corroboration radius and test two signals at once.
+        north_m=900,
+        east_m=900,
         text=(
             "A portion of the old commercial building on 5th block has come down. "
             "Dust everywhere, people are shouting that someone is under the slab."
@@ -60,8 +69,8 @@ DELIBERATE_SPECS: tuple[ReportSpec, ...] = (
     ReportSpec(
         key="dup-image-b",
         zone="KOR",
-        north_m=150,
-        east_m=-40,
+        north_m=940,
+        east_m=860,
         text=(
             "Building collapse on 5th block, sending the photo going around on our "
             "society group. Looks like people are trapped."
@@ -101,6 +110,7 @@ DELIBERATE_SPECS: tuple[ReportSpec, ...] = (
         # Newest report in the dataset: filed last, must still rank first.
         client_hours_ago=0.02,
         image="collapse-major",
+        image_gps="match",
         purpose="Highest severity, newest timestamp — Phase 6 severity must beat FIFO.",
     ),
     ReportSpec(
@@ -274,6 +284,13 @@ _FILLER: tuple[tuple[str, str, str, float, float, float, str | None], ...] = (
      "calm-stonechat-17", 4.8, 260.0, 210.0, None),
 )
 
+# Filler reports whose photograph carries EXIF GPS, by index. Kept apart from the
+# tuples above so the common case stays readable.
+_FILLER_IMAGE_GPS: dict[int, str] = {
+    8: "match",  # flooded basement — EXIF agrees with the reported location, +10
+    10: "mismatch",  # warehouse fire — EXIF is in another city, so no bonus is given
+}
+
 FILLER_SPECS: tuple[ReportSpec, ...] = tuple(
     ReportSpec(
         key=f"filler-{index:02d}",
@@ -284,6 +301,7 @@ FILLER_SPECS: tuple[ReportSpec, ...] = tuple(
         north_m=north_m,
         east_m=east_m,
         image=image,
+        image_gps=_FILLER_IMAGE_GPS.get(index) if image else None,
     )
     for index, (zone, text, pseudonym, hours_ago, north_m, east_m, image) in enumerate(
         _FILLER, start=1

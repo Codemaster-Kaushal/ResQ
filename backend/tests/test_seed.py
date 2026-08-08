@@ -207,16 +207,21 @@ def test_every_seeded_report_is_scored_and_explained(seeded, session: Session) -
     """Phase 4 acceptance: every seeded report has a severity score and non-empty
     reasons. Scores are computed by the engine at seed time, never seeded directly."""
     for report in session.exec(select(Report)).all():
-        assert report.status == ReportStatus.CLASSIFIED, report.idempotency_key
+        # The pipeline routes every report past `classified` into verified or flagged.
+        assert report.status in {ReportStatus.VERIFIED, ReportStatus.FLAGGED}, (
+            report.idempotency_key
+        )
         assert report.severity_score is not None, report.idempotency_key
         assert 0 <= report.severity_score <= 100
         assert report.severity_reasons, report.idempotency_key
         assert report.incident_type is not None
         assert report.scoring_provider == "local"
 
-        # Authenticity and priority remain Phase 5 and Phase 6's business.
-        assert report.authenticity_score is None
-        assert report.authenticity_reasons == []
+        assert report.authenticity_score is not None, report.idempotency_key
+        assert 0 <= report.authenticity_score <= 100
+        assert report.authenticity_reasons, report.idempotency_key
+
+        # Priority remains Phase 6's business.
         assert report.priority_score is None
 
 

@@ -66,8 +66,8 @@ acceptance criteria pass.
 | 2 | Data model, migrations, seed dataset | ✅ Done |
 | 3 | Report ingestion + media storage | ✅ Done |
 | 4 | Triage engine (classification + severity) | ✅ Done |
-| 5 | Authenticity and trust scoring | ⬜ Next |
-| 6 | Priority queue with ageing and override | ⬜ |
+| 5 | Authenticity and trust scoring | ✅ Done |
+| 6 | Priority queue with ageing and override | ⬜ Next |
 | 7 | Dispatch and assignment engine | ⬜ |
 | 8 | Responder status lifecycle | ⬜ |
 | 9 | Process event log, cycle-time mining, CSV export | ⬜ |
@@ -82,6 +82,7 @@ acceptance criteria pass.
 | POST | `/api/reports` | Submit a report (multipart; image optional) |
 | GET | `/api/reports` | Filterable list — status, type, bbox, pseudonym, image presence |
 | GET | `/api/reports/{id}` | Report detail with scores, reasons, and EXIF |
+| POST | `/api/reports/{id}/review` | Human review of a flagged report — verify or reject |
 | GET | `/api/_debug/*` | Deliberate-failure routes (debug routes only) |
 
 `/api/_debug/*` is mounted only when `ENABLE_DEBUG_ROUTES=true`. Set it to `false` in production.
@@ -223,6 +224,54 @@ unscored stays visible to `triage_pending()`, which is the retry queue FR-4 prom
 
 ---
 
+## Authenticity and trust
+
+A second, independent score answers a different question: not *how bad is this*, but *should we
+believe it*. Reports start at a baseline and evidence moves them:
+
+| Signal | Adjustment |
+|---|---|
+| `DUPLICATE_IMAGE` — a photograph already on file | −45 |
+| `IMPOSSIBLE_MOVEMENT` — one pseudonym, >100 km apart, within 10 min | −30 |
+| `GEO_IMPLAUSIBLE` — invalid or null-island coordinates | −25 |
+| `STALE_REPORT` — client clock >6 h before receipt | −15 |
+| `LOW_INFORMATION` — under 5 tokens and no incident named | −10 |
+| `CORROBORATED` — independent reports of the same event nearby | +25 |
+| `EXIF_CONSISTENT` — the photo's own GPS agrees with the reported location | +10 |
+
+Below `AUTHENTICITY_FLAG_THRESHOLD` a report becomes `flagged` and joins the review queue. As with
+severity, the reason weights sum to the score.
+
+### Nothing is ever auto-rejected
+
+Automated scoring can lower a report's trust and route it to a human. It cannot reject, delete, or
+hide one (FR-15). During a mass-casualty event the cost of silently discarding one true report
+dwarfs the cost of reviewing a false one, so `rejected` is reachable only through
+`POST /api/reports/{id}/review`, and every decision records the operator who made it:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/reports/$ID/review \
+  -H 'Content-Type: application/json' \
+  -d '{"decision":"reject","reviewer":"operator-priya","note":"Photo already filed by someone else"}'
+```
+
+A rejected report keeps its row and its text. Review records the decision without touching the
+computed score — the operator overrides the routing, not the measurement.
+
+### Two judgements the spec left open
+
+- **The later report is penalised, not the original.** Duplicate detection compares against reports
+  already on file, so whoever filed first is not punished for it. Ties on receipt time break on id,
+  so a pair can never both be penalised.
+- **Corroboration requires independence on three axes**: a different reporter, a different
+  photograph, and the same incident type. FR-14 says independent reports of *the same event* — two
+  unrelated incidents on one street corner do not make either more credible, and two reports built
+  on one recycled photograph are one observation, not two. That last exclusion matters: without it,
+  a duplicate could corroborate its own original, which is precisely the false-amplification this
+  stage exists to stop. `CORROBORATION_REQUIRE_SAME_TYPE=false` reverts to pure proximity.
+
+---
+
 ## The demo dataset
 
 `seed/` builds 40 reports across 4 Bengaluru zones (Koramangala, Whitefield, Hebbal, Jayanagar)
@@ -239,6 +288,11 @@ acceptance criterion has something real to detect:
 | `low-information` | Text "help" → Phase 5 `LOW_INFORMATION` |
 | `latest-critical` | Worst incident, newest timestamp → Phase 6 severity must beat FIFO |
 | `aged-low-severity` | Minor incident waiting 4 h → Phase 6 ageing prevents starvation |
+| `filler-08` / `filler-10` | Photo EXIF GPS matching / not matching the report → `EXIF_CONSISTENT` |
+
+The duplicate pair sits ~900 m from the other Koramangala reports on purpose: a fixture that
+accidentally lands inside another report's corroboration radius tests two signals at once and stops
+proving the one it was written for.
 
 Responder placement is equally deliberate: `Structural Crew Echo` is the *nearest* unit to the
 Koramangala incidents but has the wrong skill, `Medical Unit Hotel` starts at capacity, and
@@ -277,7 +331,7 @@ backend/
 │  ├─ core/          Error envelope, logging, time, geo
 │  ├─ models/        Report, Responder, Assignment, ProcessEvent
 │  ├─ schemas/       Request/response models
-│  ├─ services/      media.py, triage.py; authenticity, priority, dispatch, mining to come
+│  ├─ services/      media, triage, authenticity, pipeline; priority/dispatch/mining to come
 │  └─ ai/            base, local, gemini, groq, prompt, parsing, router
 ├─ seed/             Idempotent, self-verifying demo data
 │  ├─ seed.py

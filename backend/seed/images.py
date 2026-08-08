@@ -13,9 +13,11 @@ stays within the duplicate threshold while its bytes differ completely.
 from __future__ import annotations
 
 import random
+from datetime import datetime
 from pathlib import Path
 
 import imagehash
+import piexif
 from PIL import Image, ImageDraw, ImageFilter
 
 IMAGE_SIZE = (320, 240)
@@ -84,17 +86,60 @@ def reshare(image: Image.Image) -> Image.Image:
     return image.crop((3, 3, width - 3, height - 3)).resize(image.size, Image.BICUBIC)
 
 
-def write(image_id: str, directory: Path) -> Path:
-    """Render and save one seed image, returning its path."""
+def _to_dms(value: float) -> tuple[tuple[int, int], tuple[int, int], tuple[int, int]]:
+    value = abs(value)
+    degrees = int(value)
+    minutes_full = (value - degrees) * 60
+    minutes = int(minutes_full)
+    seconds = round((minutes_full - minutes) * 60 * 100)
+    return ((degrees, 1), (minutes, 1), (seconds, 100))
+
+
+def exif_bytes(lat: float, lng: float, captured_at: datetime) -> bytes:
+    """Build camera-style EXIF, so Phase 5's EXIF_CONSISTENT check has real input."""
+    payload = {
+        "0th": {
+            piexif.ImageIFD.Make: b"RescueNet",
+            piexif.ImageIFD.Model: b"FieldCam 1",
+        },
+        "Exif": {
+            piexif.ExifIFD.DateTimeOriginal: captured_at.strftime("%Y:%m:%d %H:%M:%S").encode()
+        },
+        "GPS": {
+            piexif.GPSIFD.GPSLatitudeRef: b"N" if lat >= 0 else b"S",
+            piexif.GPSIFD.GPSLatitude: _to_dms(lat),
+            piexif.GPSIFD.GPSLongitudeRef: b"E" if lng >= 0 else b"W",
+            piexif.GPSIFD.GPSLongitude: _to_dms(lng),
+        },
+    }
+    return piexif.dump(payload)
+
+
+def write(
+    image_id: str,
+    directory: Path,
+    gps: tuple[float, float] | None = None,
+    captured_at: datetime | None = None,
+) -> Path:
+    """Render and save one seed image, returning its path.
+
+    EXIF is only attached when GPS is supplied. Perceptual hashing reads pixels, not
+    metadata, so adding it cannot disturb the duplicate-pair distance.
+    """
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / f"{image_id}.jpg"
 
     source = RESHARES.get(image_id)
     if source is None:
-        render(image_id).save(path, "JPEG", quality=JPEG_QUALITY)
+        image, quality = render(image_id), JPEG_QUALITY
     else:
-        reshare(render(source)).save(path, "JPEG", quality=RESHARE_QUALITY)
+        image, quality = reshare(render(source)), RESHARE_QUALITY
 
+    options: dict = {"quality": quality}
+    if gps is not None:
+        options["exif"] = exif_bytes(gps[0], gps[1], captured_at or datetime(2026, 8, 8, 9, 0))
+
+    image.save(path, "JPEG", **options)
     return path
 
 
