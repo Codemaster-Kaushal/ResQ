@@ -30,7 +30,7 @@ def _engine_kwargs() -> dict[str, Any]:
     return kwargs
 
 
-engine: Engine = create_engine(settings.database_url, **_engine_kwargs())
+engine: Engine = create_engine(settings.sqlalchemy_url, **_engine_kwargs())
 
 
 @event.listens_for(Engine, "connect")

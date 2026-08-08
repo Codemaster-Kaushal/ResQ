@@ -69,8 +69,8 @@ acceptance criteria pass.
 | 5 | Authenticity and trust scoring | ✅ Done |
 | 6 | Priority queue with ageing and override | ✅ Done |
 | 7 | Dispatch and assignment engine | ✅ Done |
-| 8 | Responder status lifecycle | ⬜ Next |
-| 9 | Process event log, cycle-time mining, CSV export | ⬜ |
+| 8 | Responder status lifecycle | ✅ Done |
+| 9 | Process event log, cycle-time mining, CSV export | ⬜ Next |
 | 10 | Offline batch sync, governance endpoint, hardening, deploy | ⬜ |
 
 ### Endpoints available today
@@ -86,6 +86,9 @@ acceptance criteria pass.
 | GET | `/api/queue` | The ordered priority queue, with each score's components |
 | POST | `/api/queue/{id}/override` | Operator pin, demote, or clear — emits a process event |
 | POST | `/api/dispatch/assign` | Match the top of the queue (or a named report) to a responder |
+| POST | `/api/assignments/{id}/status` | Advance a case: acknowledged → en_route → on_scene → resolved → closed |
+| POST | `/api/assignments/{id}/reject` | Decline an assignment; the report returns to the queue |
+| GET | `/api/responders` | Roster with live load and availability |
 | GET | `/api/_debug/*` | Deliberate-failure routes (debug routes only) |
 
 `/api/_debug/*` is mounted only when `ENABLE_DEBUG_ROUTES=true`. Set it to `false` in production.
@@ -365,6 +368,45 @@ crew. Two deliberate choices here:
 
 ---
 
+## Responder lifecycle
+
+```
+assigned → acknowledged → en_route → on_scene → resolved → closed
+     └──────────┴────────────┴──→ queued   (rejection, FR-21)
+```
+
+Only transitions the lifecycle permits are accepted. Skipping a step returns a typed error naming
+what *is* allowed — a crew reporting "on scene" without ever acknowledging has almost certainly hit
+the wrong button, and silently accepting it would corrupt the cycle times Phase 9 mines:
+
+```json
+{ "error": { "code": "ILLEGAL_TRANSITION",
+             "message": "A report cannot move from assigned to resolved",
+             "detail": { "allowed": ["acknowledged", "queued"] } } }
+```
+
+**Capacity is released at `resolved`, not `closed`.** The crew is free the moment they finish on
+scene; holding their slot through the paperwork would idle a unit that could be dispatched. A unit
+that was `busy` returns to `available` — but one an operator took `offline` stays offline, whatever
+happens to its workload.
+
+### Rejection preserves the wait
+
+A declined report rejoins the queue **with the wait time it already accrued** — ageing runs from
+when the citizen filed it, not from when a crew handed it back, so nobody is penalised for a
+responder's unavailability:
+
+```
+rejected: assigned -> queued
+  back in the queue at position 1
+  wait time preserved: 66.7 minutes (not reset to 0)
+```
+
+The rejecting responder is then excluded from that report's candidate list. Without it the report
+returns to the queue, matches the same best-fit crew again, and loops.
+
+---
+
 ## The demo dataset
 
 `seed/` builds 40 reports across 4 Bengaluru zones (Koramangala, Whitefield, Hebbal, Jayanagar)
@@ -420,7 +462,7 @@ backend/
 │  ├─ main.py        App factory, request middleware, lifespan
 │  ├─ config.py      Env-driven settings (TRD §9)
 │  ├─ db.py          Engine, session dependency, health probe
-│  ├─ api/           Routers
+│  ├─ api/           reports, queue, dispatch, assignments, responders, health
 │  ├─ core/          Error envelope, logging, time, geo
 │  ├─ models/        Report, Responder, Assignment, ProcessEvent
 │  ├─ schemas/       Request/response models
@@ -445,6 +487,35 @@ backend/
   `Assignment` deliberately does not duplicate the en-route/on-scene milestones.
 - The model modules avoid `from __future__ import annotations`: SQLModel resolves relationships
   from runtime annotations and cannot follow deferred ones.
+
+---
+
+## Deploying with Postgres
+
+SQLite is the local default and stays that way — NFR-2 requires the API to run with **no network at
+all**, which a hosted database would break. Postgres matters for the deployed instance, where free
+tiers have ephemeral filesystems and a SQLite file would vanish on redeploy.
+
+Nothing in the code needs changing. Paste the connection string in and go:
+
+```bash
+DATABASE_URL='postgresql://postgres:...@db.xxxx.supabase.co:5432/postgres'
+```
+
+`postgres://` and `postgresql://` are both rewritten to the psycopg 3 dialect automatically, since
+SQLAlchemy would otherwise resolve them to psycopg2 — a driver this project doesn't ship.
+
+The schema was built for this from Phase 2: enums are portable `VARCHAR` (no native `ENUM`, and no
+`CHECK` either — both need a migration every time the taxonomy grows, so validity is enforced at
+the application boundary instead), timestamps are `TIMESTAMP WITHOUT TIME ZONE` to match the
+naive-UTC convention, and no SQLite-only SQL is used anywhere.
+[`tests/test_postgres_compat.py`](backend/tests/test_postgres_compat.py) renders the whole schema
+and compiles every live query against the Postgres dialect **offline**, so a portability break is
+caught by the test suite rather than on deploy day.
+
+Two things still to do at Phase 10: uploaded images need object storage (they live on the same
+ephemeral disk), and Supabase's pooler on port 6543 needs `prepare_threshold=0` — the direct
+connection on 5432 is simpler for a long-lived server.
 
 ---
 

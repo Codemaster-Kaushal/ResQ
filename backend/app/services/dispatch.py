@@ -146,14 +146,34 @@ def score_match(report: Report, responder: Responder) -> MatchBreakdown:
     )
 
 
+def responders_who_rejected(session: Session, report_id: uuid.UUID) -> set[uuid.UUID]:
+    """Crews that have already turned this report down.
+
+    Offering it straight back would be a loop: a rejected report returns to the queue,
+    the same best-fit responder wins again, and they reject again. Their refusal is
+    information, so it is honoured.
+    """
+    return {
+        assignment.responder_id
+        for assignment in session.exec(
+            select(Assignment).where(Assignment.report_id == report_id)
+        ).all()
+        if assignment.rejected_at is not None
+    }
+
+
 def find_candidates(session: Session, report: Report) -> list[tuple[Responder, MatchBreakdown]]:
     """Available, under capacity, and in range — scored and sorted best first."""
     eligible = session.exec(
         select(Responder).where(Responder.status == ResponderStatus.AVAILABLE)
     ).all()
 
+    refused = responders_who_rejected(session, report.id)
+
     scored: list[tuple[Responder, MatchBreakdown]] = []
     for responder in eligible:
+        if responder.id in refused:
+            continue
         # Belt and braces: status alone should imply spare capacity, but a responder
         # must never be assigned beyond it (FR-20).
         if responder.active_count >= responder.capacity:
@@ -325,3 +345,125 @@ def open_assignment_for(session: Session, report_id: uuid.UUID) -> Assignment | 
         if assignment.is_open:
             return assignment
     return None
+
+
+# --- Responder lifecycle (Phase 8) ------------------------------------------------------
+
+# Which lifecycle status each transition should be recorded as.
+STATUS_ACTIVITY: dict[ReportStatus, Activity] = {
+    ReportStatus.ACKNOWLEDGED: Activity.ACKNOWLEDGED,
+    ReportStatus.EN_ROUTE: Activity.EN_ROUTE,
+    ReportStatus.ON_SCENE: Activity.ON_SCENE,
+    ReportStatus.RESOLVED: Activity.RESOLVED,
+    ReportStatus.CLOSED: Activity.CLOSED,
+}
+
+
+def release_capacity(responder: Responder) -> None:
+    """Give a responder their slot back.
+
+    Only ``busy`` returns to ``available``: a unit an operator took ``offline`` must
+    stay offline, however its workload changes.
+    """
+    responder.active_count = max(0, responder.active_count - 1)
+    if responder.status == ResponderStatus.BUSY and responder.active_count < responder.capacity:
+        responder.status = ResponderStatus.AVAILABLE
+
+
+def advance_assignment(
+    session: Session,
+    assignment: Assignment,
+    report: Report,
+    responder: Responder,
+    target: ReportStatus,
+    actor: str,
+    note: str | None = None,
+) -> None:
+    """Move a report along its lifecycle. Caller has already checked the transition.
+
+    Capacity is released at ``resolved`` rather than ``closed``: the crew is free the
+    moment they finish on scene, and holding their slot through the paperwork would
+    idle a unit that could be dispatched.
+    """
+    now = utcnow()
+    report.status = target
+
+    if target == ReportStatus.ACKNOWLEDGED:
+        assignment.acknowledged_at = now
+    elif target == ReportStatus.RESOLVED:
+        assignment.resolved_at = now
+        release_capacity(responder)
+        session.add(responder)
+
+    session.add(assignment)
+    session.add(report)
+
+    emit_event(
+        session,
+        case_id=report.id,
+        activity=STATUS_ACTIVITY[target],
+        resource=actor,
+        metadata={
+            "assignment_id": str(assignment.id),
+            "responder_id": str(responder.id),
+            "responder_name": responder.name,
+            "note": note,
+        },
+    )
+
+    logger.info(
+        "assignment advanced",
+        extra={
+            "report_id": str(report.id),
+            "assignment_id": str(assignment.id),
+            "status": target.value,
+            "actor": actor,
+        },
+    )
+
+
+def reject_assignment(
+    session: Session,
+    assignment: Assignment,
+    report: Report,
+    responder: Responder,
+    reason: str,
+    actor: str,
+) -> None:
+    """A responder declines; the report returns to the queue (FR-21).
+
+    ``client_created_at`` is deliberately untouched, so the report resumes with the wait
+    time it already accrued rather than starting from zero. A report bounced between
+    crews would otherwise be punished for their unavailability.
+    """
+    assignment.rejected_at = utcnow()
+    assignment.rejection_reason = reason
+    session.add(assignment)
+
+    release_capacity(responder)
+    session.add(responder)
+
+    report.status = ReportStatus.QUEUED
+    session.add(report)
+
+    emit_event(
+        session,
+        case_id=report.id,
+        activity=Activity.ASSIGNMENT_REJECTED,
+        resource=actor,
+        metadata={
+            "assignment_id": str(assignment.id),
+            "responder_id": str(responder.id),
+            "responder_name": responder.name,
+            "reason": reason,
+        },
+    )
+
+    logger.info(
+        "assignment rejected",
+        extra={
+            "report_id": str(report.id),
+            "responder": responder.name,
+            "reason": reason,
+        },
+    )

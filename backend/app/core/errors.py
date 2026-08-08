@@ -49,6 +49,11 @@ class ErrorCode:
     # Phase 6 — priority queue
     REPORT_NOT_IN_QUEUE = "REPORT_NOT_IN_QUEUE"
 
+    # Phase 8 — responder lifecycle
+    ASSIGNMENT_NOT_FOUND = "ASSIGNMENT_NOT_FOUND"
+    ASSIGNMENT_CLOSED = "ASSIGNMENT_CLOSED"
+    ILLEGAL_TRANSITION = "ILLEGAL_TRANSITION"
+
 
 # Starlette raises bare HTTPExceptions for routing failures; map them onto our codes.
 _STATUS_TO_CODE = {

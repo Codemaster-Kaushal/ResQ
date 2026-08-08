@@ -12,6 +12,10 @@ sqlmodel>=0.0.22,<0.1
 pydantic>=2.7,<3.0
 pydantic-settings>=2.3,<3.0
 alembic>=1.13,<2.0               # optional migrations; create_all is the Phase 1 path
+psycopg[binary]>=3.1,<4.0        # Postgres driver for the deployed instance (Phase 10).
+                                 # SQLite stays the local default: NFR-2 requires the API
+                                 # to run with no network at all. Added now because TRD §10
+                                 # freezes dependencies after Phase 9.
 
 # --- Media / authenticity (Phases 3 & 5) ---
 Pillow>=10.3

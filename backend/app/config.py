@@ -128,6 +128,26 @@ class Settings(BaseSettings):
     def is_sqlite(self) -> bool:
         return self.database_url.startswith("sqlite")
 
+    @property
+    def is_postgres(self) -> bool:
+        return self.database_url.startswith(("postgres://", "postgresql"))
+
+    @property
+    def sqlalchemy_url(self) -> str:
+        """The URL actually handed to SQLAlchemy.
+
+        Supabase, Render, and Heroku all hand out ``postgresql://`` (or the legacy
+        ``postgres://``), which SQLAlchemy resolves to psycopg2 — a driver this project
+        does not ship. Pinning the psycopg 3 dialect here means a connection string can
+        be pasted in unedited.
+        """
+        url = self.database_url
+        if url.startswith("postgres://"):
+            url = "postgresql://" + url[len("postgres://") :]
+        if url.startswith("postgresql://"):
+            url = "postgresql+psycopg://" + url[len("postgresql://") :]
+        return url
+
     def configured_providers(self) -> dict[str, bool]:
         """Which remote providers actually have credentials. Never exposes the keys."""
         return {
