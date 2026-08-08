@@ -67,8 +67,8 @@ acceptance criteria pass.
 | 3 | Report ingestion + media storage | ✅ Done |
 | 4 | Triage engine (classification + severity) | ✅ Done |
 | 5 | Authenticity and trust scoring | ✅ Done |
-| 6 | Priority queue with ageing and override | ⬜ Next |
-| 7 | Dispatch and assignment engine | ⬜ |
+| 6 | Priority queue with ageing and override | ✅ Done |
+| 7 | Dispatch and assignment engine | ⬜ Next |
 | 8 | Responder status lifecycle | ⬜ |
 | 9 | Process event log, cycle-time mining, CSV export | ⬜ |
 | 10 | Offline batch sync, governance endpoint, hardening, deploy | ⬜ |
@@ -83,6 +83,8 @@ acceptance criteria pass.
 | GET | `/api/reports` | Filterable list — status, type, bbox, pseudonym, image presence |
 | GET | `/api/reports/{id}` | Report detail with scores, reasons, and EXIF |
 | POST | `/api/reports/{id}/review` | Human review of a flagged report — verify or reject |
+| GET | `/api/queue` | The ordered priority queue, with each score's components |
+| POST | `/api/queue/{id}/override` | Operator pin, demote, or clear — emits a process event |
 | GET | `/api/_debug/*` | Deliberate-failure routes (debug routes only) |
 
 `/api/_debug/*` is mounted only when `ENABLE_DEBUG_ROUTES=true`. Set it to `false` in production.
@@ -165,6 +167,8 @@ Key ones:
 | `ENABLE_DEBUG_ROUTES` | `true` | Mounts `/api/_debug/*` |
 | `AI_PROVIDER_ORDER` | `gemini,groq,local` | Fallback chain; `local` is always appended |
 | `AUTHENTICITY_FLAG_THRESHOLD` | `40` | Below this, a report is flagged for human review |
+| `PRIORITY_WEIGHT_SEVERITY` | `0.70` | Severity's share of the priority score |
+| `AGEING_RATE_PER_MINUTE` | `1.5` | How fast a waiting report climbs |
 | `DISPATCH_MAX_RADIUS_KM` | `25` | Responder search radius |
 
 ---
@@ -272,6 +276,55 @@ computed score — the operator overrides the routing, not the measurement.
 
 ---
 
+## The priority queue
+
+```
+priority = 0.70*severity + 0.15*authenticity + 0.15*ageing_bonus
+ageing_bonus = min(100, minutes_waited * 1.5)
+```
+
+On the seeded dataset, `GET /api/queue` puts the report filed **one minute ago** ahead of one that
+arrived **144 minutes** earlier:
+
+| # | report | severity | trust | ageing | priority | waited |
+|---|---|---|---|---|---|---|
+| 1 | `latest-critical` | 94 | 70 | 1.8 | **76.58** | 1 min |
+| 2 | `filler-14` | 60 | 85 | 99.0 | 69.61 | 66 min |
+| 3 | `filler-01` | 64 | 60 | 100.0 | 68.80 | 144 min |
+
+Every entry carries the three numbers behind its position, so an operator can argue with the
+ranking rather than just accept it.
+
+**Ageing uses the client clock, not receipt** (FR-28). A report filed offline an hour ago has been
+waiting an hour, however slow the sync was — scoring by receipt time would punish exactly the
+people with the worst connectivity. Ageing is also the starvation guarantee (FR-17): the seeded
+`aged-low-severity` report has severity 14, but four hours of waiting lifts it from 18.8 to 33.8.
+
+The order is recomputed on every read, because the ageing term moves with the clock. A queue cached
+even for a minute starts lying about who has been waiting longest.
+
+### Operator override
+
+Operators have context the model does not, so their judgement outranks the arithmetic in both
+directions:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/queue/$ID/override \
+  -H 'Content-Type: application/json' \
+  -d '{"action":"pin","operator":"controller-meera","reason":"Caller reports a child is missing"}'
+```
+
+`pin` sorts above every computed score, `demote` below every one, `clear` returns the report to the
+computed band. The data model carries a single nullable integer for operator intent, so the sign
+encodes direction — positive pins, negative demotes — and an explicit `rank` orders within a band.
+
+Every override emits a `PRIORITY_OVERRIDDEN` process event recording the operator, the reason, and
+the position it moved from, so the human-in-the-loop claim is evidenced in the log rather than
+asserted in the pitch (FR-18, FR-30). This is the one event emitted so far; Phase 9 extends
+emission to every transition and adds the log API, CSV export, and bottleneck mining.
+
+---
+
 ## The demo dataset
 
 `seed/` builds 40 reports across 4 Bengaluru zones (Koramangala, Whitefield, Hebbal, Jayanagar)
@@ -331,7 +384,7 @@ backend/
 │  ├─ core/          Error envelope, logging, time, geo
 │  ├─ models/        Report, Responder, Assignment, ProcessEvent
 │  ├─ schemas/       Request/response models
-│  ├─ services/      media, triage, authenticity, pipeline; priority/dispatch/mining to come
+│  ├─ services/      media, triage, authenticity, priority, events, pipeline
 │  └─ ai/            base, local, gemini, groq, prompt, parsing, router
 ├─ seed/             Idempotent, self-verifying demo data
 │  ├─ seed.py

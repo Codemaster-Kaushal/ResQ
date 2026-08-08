@@ -34,6 +34,7 @@ from app.core.time import minutes_between, utcnow
 from app.db import engine, ensure_storage_paths, init_db
 from app.models import Assignment, ProcessEvent, Report, ReportStatus, Responder
 from app.services.pipeline import process_pending
+from app.services.priority import build_queue, compute_priority
 from seed import images
 from seed.fixtures.reports import (
     EXPECTED_REPORT_COUNT,
@@ -71,6 +72,7 @@ class SeedSummary:
     images_written: int = 0
     reports_scored: int = 0
     reports_assessed: int = 0
+    reports_queued: int = 0
     checks: list[Check] = field(default_factory=list)
 
     @property
@@ -473,6 +475,41 @@ def _verify(session: Session, summary: SeedSummary) -> None:
         f"{', '.join(sorted(r.idempotency_key for r in flagged))}",
     )
 
+    # --- Priority queue (Phase 6 acceptance) ---
+    queue = build_queue(session)
+    summary.add(
+        "queue holds every unflagged report",
+        len(queue) == len(all_reports) - len(flagged),
+        f"{len(queue)} queued, {len(flagged)} held for review",
+    )
+
+    if queue:
+        top = queue[0]
+        runner_up = queue[1].breakdown.score if len(queue) > 1 else 0.0
+        summary.add(
+            "newest critical report ranks first",
+            top.report.idempotency_key == f"{IDEMPOTENCY_PREFIX}latest-critical",
+            f"#1 is {top.report.idempotency_key} at {top.breakdown.score} "
+            f"(+{round(top.breakdown.score - runner_up, 2)} over #2), "
+            f"filed {top.breakdown.minutes_waiting:.0f} min ago — last in, first out",
+        )
+    else:
+        summary.add("newest critical report ranks first", False, "queue is empty")
+
+    # Ageing must visibly lift a stale minor report (FR-17, anti-starvation).
+    aged = _by_key(session, "aged-low-severity")
+    if aged is not None:
+        waited = compute_priority(aged)
+        fresh = compute_priority(aged, aged.client_created_at)
+        summary.add(
+            "ageing lifts a long-waiting report",
+            waited.score > fresh.score,
+            f"aged-low-severity at {waited.score} after "
+            f"{waited.minutes_waiting:.0f} min, versus {fresh.score} when freshly filed",
+        )
+    else:
+        summary.add("ageing lifts a long-waiting report", False, "fixture missing")
+
     # The demo hinges on this ordering (Phase 6): the newest report is also the worst.
     critical = _by_key(session, "latest-critical")
     aged = _by_key(session, "aged-low-severity")
@@ -506,7 +543,11 @@ def run(reset: bool = False, echo: Callable[[str], None] = print) -> SeedSummary
     # ingestion uses — triage, then authenticity. With no API keys configured the remote
     # providers are skipped and the local scorer answers, so a re-seed with the network
     # off still scores everything (Phase 4 acceptance, NFR-2).
-    summary.reports_scored, summary.reports_assessed = asyncio.run(process_pending())
+    (
+        summary.reports_scored,
+        summary.reports_assessed,
+        summary.reports_queued,
+    ) = asyncio.run(process_pending())
 
     with Session(engine) as session:
         _verify(session, summary)
@@ -523,6 +564,7 @@ def _report(summary: SeedSummary, echo: Callable[[str], None]) -> None:
     echo(f"  images     {summary.images_written:>3} written to {settings.media_dir / SEED_IMAGE_DIR}")
     echo(f"  triaged    {summary.reports_scored:>3} newly scored")
     echo(f"  assessed   {summary.reports_assessed:>3} newly authenticity-scored")
+    echo(f"  queued     {summary.reports_queued:>3} entered the priority queue")
     echo("")
     echo("Fixture checks")
     for check in summary.checks:

@@ -101,10 +101,15 @@ DELIBERATE_SPECS: tuple[ReportSpec, ...] = (
         zone="JYN",
         north_m=-90,
         east_m=140,
+        # Written to read like the worst call of the day, because that is the fixture's
+        # job. An under-described catastrophe scores mid-table, and ageing then lets
+        # older moderate reports overtake it — which is the formula behaving correctly
+        # but the demo failing to show what it was built to show.
         text=(
             "The four storey building next to the market has collapsed completely. "
-            "At least twenty people are trapped inside, we can hear children crying "
-            "under the debris and there is no way in from the front."
+            "At least twenty people are trapped inside and there is no way in from "
+            "the front. We can hear children and an elderly couple crying under the "
+            "debris, and one man we pulled out is bleeding badly and is not breathing."
         ),
         pseudonym="urgent-kestrel-88",
         # Newest report in the dataset: filed last, must still rank first.

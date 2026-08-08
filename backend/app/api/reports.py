@@ -46,6 +46,7 @@ from app.schemas.report import (
 )
 from app.services.media import read_exif_from_path, store_image_bytes
 from app.services.pipeline import process_report
+from app.services.priority import enqueue_verified
 from app.services.triage import reason
 
 logger = get_logger(__name__)
@@ -357,8 +358,13 @@ def review_report(
     if payload.note:
         entry["note"] = payload.note
     report.authenticity_reasons = [*report.authenticity_reasons, entry]
-
     session.add(report)
+
+    # A report an operator has just cleared belongs in the queue immediately, not on
+    # the next background sweep.
+    if verified:
+        enqueue_verified(session, report)
+
     session.commit()
     session.refresh(report)
 

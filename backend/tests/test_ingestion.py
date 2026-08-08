@@ -369,10 +369,10 @@ def test_ingestion_returns_before_scoring(client: TestClient) -> None:
 
     assert created["status"] == ReportStatus.RECEIVED.value
 
-    # The background pipeline runs triage and then authenticity, so by the time the
-    # report can be read it has been routed past `classified`.
+    # The background pipeline runs triage, then authenticity, then queueing, so by
+    # the time the report can be read it has been routed all the way to the queue.
     detail = client.get(f"{ENDPOINT}/{created['id']}").json()
-    assert detail["status"] in {ReportStatus.VERIFIED.value, ReportStatus.FLAGGED.value}
+    assert detail["status"] in {ReportStatus.QUEUED.value, ReportStatus.FLAGGED.value}
     assert detail["severity_score"] is not None
     assert detail["severity_reasons"]
     assert detail["scoring_provider"] == "local"
@@ -480,7 +480,7 @@ def test_list_filters_by_pseudonym(client: TestClient, listing_reports: str) -> 
 def test_list_filters_by_status(client: TestClient, listing_reports: str) -> None:
     # The background pipeline has already advanced these past `received`.
     body = client.get(
-        ENDPOINT, params={"reporter_pseudonym": listing_reports, "status": "verified"}
+        ENDPOINT, params={"reporter_pseudonym": listing_reports, "status": "queued"}
     ).json()
     assert body["total"] == 3
 

@@ -66,6 +66,13 @@ class Settings(BaseSettings):
     exif_match_radius_km: float = Field(default=1.0, gt=0)
     low_information_max_tokens: int = Field(default=5, ge=1)
 
+    # --- Priority queue (Phase 6) ---
+    priority_weight_severity: float = Field(default=0.70, ge=0, le=1)
+    priority_weight_authenticity: float = Field(default=0.15, ge=0, le=1)
+    priority_weight_ageing: float = Field(default=0.15, ge=0, le=1)
+    ageing_rate_per_minute: float = Field(default=1.5, gt=0)
+    ageing_max_bonus: float = Field(default=100.0, gt=0)
+
     # --- Dispatch (Phase 7) ---
     dispatch_max_radius_km: float = Field(default=25.0, gt=0)
 

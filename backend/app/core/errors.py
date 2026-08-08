@@ -46,6 +46,9 @@ class ErrorCode:
     # Phase 5 — authenticity and human review
     REPORT_NOT_UNDER_REVIEW = "REPORT_NOT_UNDER_REVIEW"
 
+    # Phase 6 — priority queue
+    REPORT_NOT_IN_QUEUE = "REPORT_NOT_IN_QUEUE"
+
 
 # Starlette raises bare HTTPExceptions for routing failures; map them onto our codes.
 _STATUS_TO_CODE = {

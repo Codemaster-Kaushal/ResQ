@@ -207,8 +207,8 @@ def test_every_seeded_report_is_scored_and_explained(seeded, session: Session) -
     """Phase 4 acceptance: every seeded report has a severity score and non-empty
     reasons. Scores are computed by the engine at seed time, never seeded directly."""
     for report in session.exec(select(Report)).all():
-        # The pipeline routes every report past `classified` into verified or flagged.
-        assert report.status in {ReportStatus.VERIFIED, ReportStatus.FLAGGED}, (
+        # The pipeline routes every report to the queue, or to human review.
+        assert report.status in {ReportStatus.QUEUED, ReportStatus.FLAGGED}, (
             report.idempotency_key
         )
         assert report.severity_score is not None, report.idempotency_key
@@ -221,8 +221,11 @@ def test_every_seeded_report_is_scored_and_explained(seeded, session: Session) -
         assert 0 <= report.authenticity_score <= 100
         assert report.authenticity_reasons, report.idempotency_key
 
-        # Priority remains Phase 6's business.
-        assert report.priority_score is None
+        # Queued reports carry a priority score; flagged ones are not in the queue.
+        if report.status == ReportStatus.QUEUED:
+            assert report.priority_score is not None, report.idempotency_key
+        else:
+            assert report.priority_score is None
 
 
 def test_seeded_reasons_reconcile_with_their_scores(seeded, session: Session) -> None:

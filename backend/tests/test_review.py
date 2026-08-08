@@ -58,10 +58,12 @@ def test_an_operator_can_verify_a_flagged_report(client: TestClient, flagged_rep
 
     assert response.status_code == 200
     body = response.json()
-    assert body["status"] == ReportStatus.VERIFIED.value
     assert body["reviewer"] == "operator-priya"
+    # Clearing a report puts it straight into the queue rather than leaving it to
+    # the next background sweep, so `queued` is the state that comes back.
+    assert body["status"] == ReportStatus.QUEUED.value
 
-    assert client.get(f"{ENDPOINT}/{flagged_report}").json()["status"] == "verified"
+    assert client.get(f"{ENDPOINT}/{flagged_report}").json()["status"] == "queued"
 
 
 def test_an_operator_can_reject_a_flagged_report(client: TestClient, flagged_report: str) -> None:
@@ -189,7 +191,7 @@ def test_ingestion_produces_a_trust_score_without_being_asked(client: TestClient
 
     assert detail["authenticity_score"] is not None
     assert detail["authenticity_reasons"]
-    assert detail["status"] in {"verified", "flagged"}
+    assert detail["status"] in {"queued", "flagged"}
 
 
 def test_a_resubmitted_photograph_is_flagged_end_to_end(client: TestClient) -> None:
