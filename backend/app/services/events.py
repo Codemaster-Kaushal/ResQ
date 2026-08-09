@@ -12,6 +12,7 @@ the process-mining CSV export, and bottleneck detection on top of it.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from typing import Any
 
 from sqlmodel import Session
@@ -31,15 +32,20 @@ def emit_event(
     activity: Activity | str,
     resource: str = SYSTEM_ACTOR,
     metadata: dict[str, Any] | None = None,
+    timestamp: datetime | None = None,
 ) -> ProcessEvent:
-    """Append one event to the log. Does not commit — the caller owns the transaction."""
+    """Append one event to the log. Does not commit — the caller owns the transaction.
+
+    ``timestamp`` exists so the seed can lay down a backdated history. Live callers
+    always leave it unset: an event's time is when it happened, not when it was written.
+    """
     name = activity.value if isinstance(activity, Activity) else str(activity)
 
     event = ProcessEvent(
         case_id=case_id,
         activity=name,
         resource=resource,
-        timestamp=utcnow(),
+        timestamp=timestamp or utcnow(),
         event_metadata=metadata or {},
     )
     session.add(event)

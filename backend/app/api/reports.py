@@ -29,9 +29,9 @@ from app.core.errors import (
     ValidationFailedError,
 )
 from app.core.logging import get_logger
-from app.core.time import utcnow
+from app.core.time import minutes_between, utcnow
 from app.db import get_session
-from app.models import IncidentType, Report, ReportStatus
+from app.models import Activity, IncidentType, Report, ReportStatus
 from app.schemas.report import (
     ExifRead,
     ImageRead,
@@ -44,6 +44,7 @@ from app.schemas.report import (
     ReviewRequest,
     ReviewResult,
 )
+from app.services.events import emit_event
 from app.services.media import read_exif_from_path, store_image_bytes
 from app.services.pipeline import process_report
 from app.services.priority import enqueue_verified
@@ -208,6 +209,25 @@ async def create_report(
         status=ReportStatus.RECEIVED,
     )
     session.add(report)
+    # Flush before the event: ProcessEvent.case_id is a foreign key, and with no ORM
+    # relationship between the two SQLAlchemy has no dependency to order the inserts by.
+    # This is the only place a case and its first event are created together.
+    session.flush()
+
+    emit_event(
+        session,
+        case_id=report.id,
+        activity=Activity.REPORT_RECEIVED,
+        resource=f"reporter:{report.reporter_pseudonym}",
+        metadata={
+            "idempotency_key": report.idempotency_key,
+            "has_image": stored is not None,
+            "offline_delay_minutes": round(
+                minutes_between(report.client_created_at, report.received_at), 1
+            ),
+        },
+        timestamp=report.received_at,
+    )
     session.commit()
     session.refresh(report)
 
@@ -362,6 +382,14 @@ def review_report(
 
     # A report an operator has just cleared belongs in the queue immediately, not on
     # the next background sweep.
+    emit_event(
+        session,
+        case_id=report.id,
+        activity=Activity.REPORT_VERIFIED if verified else Activity.REPORT_REJECTED,
+        resource=f"operator:{payload.reviewer}",
+        metadata={"decision": payload.decision.value, "note": payload.note},
+    )
+
     if verified:
         enqueue_verified(session, report)
 

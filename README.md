@@ -70,8 +70,8 @@ acceptance criteria pass.
 | 6 | Priority queue with ageing and override | ✅ Done |
 | 7 | Dispatch and assignment engine | ✅ Done |
 | 8 | Responder status lifecycle | ✅ Done |
-| 9 | Process event log, cycle-time mining, CSV export | ⬜ Next |
-| 10 | Offline batch sync, governance endpoint, hardening, deploy | ⬜ |
+| 9 | Process event log, cycle-time mining, CSV export | ✅ Done |
+| 10 | Offline batch sync, governance endpoint, hardening, deploy | ⬜ Next |
 
 ### Endpoints available today
 
@@ -89,6 +89,9 @@ acceptance criteria pass.
 | POST | `/api/assignments/{id}/status` | Advance a case: acknowledged → en_route → on_scene → resolved → closed |
 | POST | `/api/assignments/{id}/reject` | Decline an assignment; the report returns to the queue |
 | GET | `/api/responders` | Roster with live load and availability |
+| GET | `/api/events` | The append-only process event log |
+| GET | `/api/events/export.csv` | Process-mining CSV export |
+| GET | `/api/mining/bottlenecks` | Cycle times and flagged stages |
 | GET | `/api/_debug/*` | Deliberate-failure routes (debug routes only) |
 
 `/api/_debug/*` is mounted only when `ENABLE_DEBUG_ROUTES=true`. Set it to `false` in production.
@@ -407,6 +410,54 @@ returns to the queue, matches the same best-fit crew again, and loops.
 
 ---
 
+## Process intelligence
+
+Every state transition is recorded, from intake to closure. One report's trail:
+
+```
+ 1. REPORT_RECEIVED       reporter:anon-4a076758
+ 2. TRIAGE_COMPLETED      scorer:local
+ 3. AUTHENTICITY_SCORED   system
+ 4. REPORT_VERIFIED       system
+ 5. QUEUED                system
+ 6. ASSIGNED              operator:controller-meera
+ 7. ACKNOWLEDGED          responder-charlie
+ 8. EN_ROUTE              responder-charlie
+ 9. ON_SCENE              responder-charlie
+10. RESOLVED              responder-charlie
+11. CLOSED                responder-charlie
+```
+
+`GET /api/events/export.csv` emits exactly `case_id, activity, timestamp, resource` — Disco, ProM
+and pm4py read that shape with no column mapping. The log streams in batches, so an export never
+has to fit in memory.
+
+### Where the process is actually slowing down
+
+`GET /api/mining/bottlenecks` compares what each stage is taking now against the median it took
+across completed cases:
+
+```
+FINDING: QUEUED→ASSIGNED
+  9 completed cases took a median of 11.82 min.
+  28 open cases are averaging 85.87 min — 7.26x.
+  ACTION: Reports are waiting too long for a responder. Add crews, widen
+          DISPATCH_MAX_RADIUS_KM, or check whether units are stuck at capacity.
+```
+
+That is the difference between "the response felt slow today" and a claim with a number attached.
+
+Two things it deliberately does *not* do. A **median**, not a mean, so one nine-hour outlier cannot
+hide a problem. And a stage with **no completed cases to compare against is reported but never
+flagged** — the seeded review queue shows a 96-minute wait at `REPORT_FLAGGED` with a ratio of 0,
+because no case has yet been through review. A long wait with no baseline is a fact, not a finding.
+
+**A closed case's durations are the baseline, so the seed lays down a past** — it carries its oldest
+reports through the full lifecycle with plausible backdated timings. Without that, a fresh database
+can only honestly answer "no data".
+
+---
+
 ## The demo dataset
 
 `seed/` builds 40 reports across 4 Bengaluru zones (Koramangala, Whitefield, Hebbal, Jayanagar)
@@ -466,7 +517,7 @@ backend/
 │  ├─ core/          Error envelope, logging, time, geo
 │  ├─ models/        Report, Responder, Assignment, ProcessEvent
 │  ├─ schemas/       Request/response models
-│  ├─ services/      media, triage, authenticity, priority, dispatch, events, pipeline
+│  ├─ services/      media, triage, authenticity, priority, dispatch, events, mining, pipeline
 │  └─ ai/            base, local, gemini, groq, prompt, parsing, router
 ├─ seed/             Idempotent, self-verifying demo data
 │  ├─ seed.py

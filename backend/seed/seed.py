@@ -32,11 +32,12 @@ from app.config import settings
 from app.core.geo import haversine_m, offset_metres
 from app.core.time import minutes_between, utcnow
 from app.db import engine, ensure_storage_paths, init_db
-from app.models import Assignment, ProcessEvent, Report, ReportStatus, Responder
+from app.models import Activity, Assignment, ProcessEvent, Report, ReportStatus, Responder
 from app.services.pipeline import process_pending
 from app.services.dispatch import find_candidates
+from app.services.mining import analyse
 from app.services.priority import build_queue, compute_priority
-from seed import images
+from seed import history, images
 from seed.fixtures.reports import (
     EXPECTED_REPORT_COUNT,
     EXPECTED_ZONE_COUNTS,
@@ -74,6 +75,8 @@ class SeedSummary:
     reports_scored: int = 0
     reports_assessed: int = 0
     reports_queued: int = 0
+    events_written: int = 0
+    cases_closed: int = 0
     checks: list[Check] = field(default_factory=list)
 
     @property
@@ -162,12 +165,16 @@ def _seed_reports(
     catalogue: dict[str, tuple[str, str]],
     now: datetime,
     summary: SeedSummary,
-) -> None:
+) -> set[uuid.UUID]:
+    """Insert missing reports; returns the ids actually created this run."""
+    created: set[uuid.UUID] = set()
+
     for spec in REPORT_SPECS:
         report_id = stable_id("report", spec.key)
         if session.get(Report, report_id) is not None:
             summary.reports_existing += 1
             continue
+        created.add(report_id)
 
         lat, lng = resolve_coordinates(spec)
         received_hours = (
@@ -195,6 +202,7 @@ def _seed_reports(
         summary.reports_created += 1
 
     session.commit()
+    return created
 
 
 def _by_key(session: Session, key: str) -> Report | None:
@@ -478,10 +486,11 @@ def _verify(session: Session, summary: SeedSummary) -> None:
 
     # --- Priority queue (Phase 6 acceptance) ---
     queue = build_queue(session)
+    finished = [r for r in all_reports if r.status in {ReportStatus.CLOSED, ReportStatus.RESOLVED}]
     summary.add(
-        "queue holds every unflagged report",
-        len(queue) == len(all_reports) - len(flagged),
-        f"{len(queue)} queued, {len(flagged)} held for review",
+        "queue holds every unflagged, unfinished report",
+        len(queue) == len(all_reports) - len(flagged) - len(finished),
+        f"{len(queue)} queued, {len(flagged)} held for review, {len(finished)} completed",
     )
 
     if queue:
@@ -510,6 +519,56 @@ def _verify(session: Session, summary: SeedSummary) -> None:
         )
     else:
         summary.add("ageing lifts a long-waiting report", False, "fixture missing")
+
+    # --- Process intelligence (Phase 9 acceptance) ---
+    events = session.exec(select(ProcessEvent)).all()
+    cases_with_events = {event.case_id for event in events}
+    summary.add(
+        "every report has an event trail",
+        cases_with_events == {report.id for report in all_reports},
+        f"{len(events)} events across {len(cases_with_events)} cases",
+    )
+
+    trails: dict = {}
+    for event in sorted(events, key=lambda e: (e.timestamp, str(e.id))):
+        trails.setdefault(event.case_id, []).append(event)
+
+    out_of_order = [
+        case
+        for case, trail in trails.items()
+        if any(a.timestamp > b.timestamp for a, b in zip(trail, trail[1:]))
+    ]
+    summary.add(
+        "event trails are chronological",
+        not out_of_order,
+        "every case reads in the order it happened",
+    )
+
+    starts_wrong = [
+        case for case, trail in trails.items() if trail[0].activity != Activity.REPORT_RECEIVED.value
+    ]
+    summary.add(
+        "every trail starts at REPORT_RECEIVED",
+        not starts_wrong,
+        f"{len(trails)} trails begin at intake",
+    )
+
+    analysis = analyse(session)
+    summary.add(
+        "closed cases provide a baseline",
+        analysis.closed_cases > 0,
+        f"{analysis.closed_cases} closed cases, {analysis.open_cases} still open",
+    )
+
+    finding = analysis.bottlenecks[0] if analysis.bottlenecks else None
+    summary.add(
+        "bottleneck detection returns a real finding",
+        finding is not None and bool(finding.suggested_action),
+        f"{finding.transition}: median {finding.median_minutes} min vs "
+        f"{finding.current_mean_minutes} min now ({finding.deviation_ratio}x)"
+        if finding
+        else "no bottleneck detected",
+    )
 
     # --- Dispatch fixtures (Phase 7 acceptance) ---
     medical_kor = _by_key(session, "filler-03")
@@ -571,7 +630,7 @@ def run(reset: bool = False, echo: Callable[[str], None] = print) -> SeedSummary
 
         _seed_responders(session, summary)
         catalogue = _seed_images(summary, now)
-        _seed_reports(session, catalogue, now, summary)
+        created_ids = _seed_reports(session, catalogue, now, summary)
 
     # Scoring runs after the reports are committed, through exactly the same pipeline
     # ingestion uses — triage, then authenticity. With no API keys configured the remote
@@ -582,6 +641,16 @@ def run(reset: bool = False, echo: Callable[[str], None] = print) -> SeedSummary
         summary.reports_assessed,
         summary.reports_queued,
     ) = asyncio.run(process_pending())
+
+    # Give the dataset a past. Bottleneck detection compares current waits against
+    # medians learned from completed cases, so without history it can only say
+    # "no data" (Phase 9 acceptance).
+    with Session(engine) as session:
+        replayed = history.replay(
+            session, now, list(session.exec(select(Responder)).all()), created_ids
+        )
+        summary.events_written = replayed.events_written
+        summary.cases_closed = replayed.closed_cases
 
     with Session(engine) as session:
         _verify(session, summary)
@@ -599,6 +668,7 @@ def _report(summary: SeedSummary, echo: Callable[[str], None]) -> None:
     echo(f"  triaged    {summary.reports_scored:>3} newly scored")
     echo(f"  assessed   {summary.reports_assessed:>3} newly authenticity-scored")
     echo(f"  queued     {summary.reports_queued:>3} entered the priority queue")
+    echo(f"  history    {summary.events_written:>3} process events, {summary.cases_closed} cases run to closed")
     echo("")
     echo("Fixture checks")
     for check in summary.checks:

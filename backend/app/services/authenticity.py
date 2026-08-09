@@ -36,7 +36,8 @@ from app.core.geo import haversine_km, haversine_m, is_null_island, is_valid_coo
 from app.core.logging import get_logger
 from app.core.time import minutes_between
 from app.db import engine
-from app.models import Report, ReportStatus
+from app.models import Activity, Report, ReportStatus
+from app.services.events import emit_event
 from app.services.media import read_exif_from_path
 from app.services.triage import reason
 
@@ -305,6 +306,29 @@ async def assess_report(report_id: uuid.UUID, *, force: bool = False) -> Authent
             status = apply_authenticity(report, assessment)
 
             session.add(report)
+            emit_event(
+                session,
+                case_id=report.id,
+                activity=Activity.AUTHENTICITY_SCORED,
+                metadata={
+                    "authenticity_score": assessment.score,
+                    "reason_codes": assessment.reason_codes,
+                    "threshold": settings.authenticity_flag_threshold,
+                },
+            )
+            # The routing decision is its own event: it is what a human acts on, and
+            # Phase 9's mining measures how long a flagged report waits for review.
+            if status in (ReportStatus.FLAGGED, ReportStatus.VERIFIED):
+                emit_event(
+                    session,
+                    case_id=report.id,
+                    activity=(
+                        Activity.REPORT_FLAGGED
+                        if status == ReportStatus.FLAGGED
+                        else Activity.REPORT_VERIFIED
+                    ),
+                    metadata={"authenticity_score": assessment.score},
+                )
             session.commit()
 
         logger.info(

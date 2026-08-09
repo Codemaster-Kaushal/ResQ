@@ -22,7 +22,8 @@ from sqlmodel import Session, select
 from app.config import settings
 from app.core.logging import get_logger
 from app.core.time import minutes_between, utcnow
-from app.models import Report, ReportStatus
+from app.models import Activity, Report, ReportStatus
+from app.services.events import emit_event
 
 logger = get_logger(__name__)
 
@@ -167,9 +168,21 @@ def enqueue_verified(session: Session, report: Report, now: datetime | None = No
     if report.status != ReportStatus.VERIFIED:
         return False
 
+    breakdown = compute_priority(report, now)
     report.status = ReportStatus.QUEUED
-    report.priority_score = compute_priority(report, now).score
+    report.priority_score = breakdown.score
     session.add(report)
+
+    emit_event(
+        session,
+        case_id=report.id,
+        activity=Activity.QUEUED,
+        metadata={
+            "priority_score": breakdown.score,
+            "severity": breakdown.severity,
+            "authenticity": breakdown.authenticity,
+        },
+    )
     return True
 
 

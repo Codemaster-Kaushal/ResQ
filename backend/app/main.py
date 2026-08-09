@@ -14,7 +14,17 @@ from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from app.api import assignments, debug, dispatch, health, queue, reports, responders
+from app.api import (
+    assignments,
+    debug,
+    dispatch,
+    events,
+    health,
+    mining,
+    queue,
+    reports,
+    responders,
+)
 from app.config import settings
 from app.core.errors import DEFAULT_ERROR_RESPONSES, register_exception_handlers
 from app.core.logging import (
@@ -123,6 +133,8 @@ def create_app() -> FastAPI:
     app.include_router(dispatch.router)
     app.include_router(assignments.router)
     app.include_router(responders.router)
+    app.include_router(events.router)
+    app.include_router(mining.router)
     if settings.enable_debug_routes:
         app.include_router(debug.router)
 

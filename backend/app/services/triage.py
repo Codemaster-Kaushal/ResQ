@@ -29,7 +29,8 @@ from app.ai.router import RoutedTriage, TriageRouter, router as default_router
 from app.config import settings
 from app.core.logging import get_logger
 from app.db import engine
-from app.models import IncidentType, Report, ReportStatus
+from app.models import Activity, IncidentType, Report, ReportStatus
+from app.services.events import emit_event
 
 logger = get_logger(__name__)
 
@@ -284,6 +285,19 @@ async def triage_report(
             severity = apply_triage(report, routed)
 
             session.add(report)
+            emit_event(
+                session,
+                case_id=report.id,
+                activity=Activity.TRIAGE_COMPLETED,
+                resource=f"scorer:{routed.provider}",
+                metadata={
+                    "incident_type": routed.result.incident_type.value,
+                    "severity_score": severity.score,
+                    "reason_codes": severity.reason_codes,
+                    "provider": routed.provider,
+                    "degraded": routed.degraded,
+                },
+            )
             session.commit()
 
         logger.info(
