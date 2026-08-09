@@ -1,4 +1,4 @@
-/* Client for the RescueNet backend.
+/* Client for the ResQ AI backend.
  *
  * One place that knows the wire format, so nothing else has to guess. Every
  * failure surfaces as an ApiError carrying the backend's typed error code

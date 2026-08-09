@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#12100e">
-<title>RescueNet — Control Room</title>
+<title>ResQ AI — Control Room</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="css/base.css">
@@ -12,23 +12,47 @@
 </head>
 <body class="control">
 
+<!-- Operator sign-in. This establishes identity and role locally; it is not
+     authentication — the backend has no auth, and the notice below says so. -->
+<div class="signin" id="signin" hidden>
+  <div class="signin-card">
+    <div class="brand-lockup">
+      <img src="icons/icon.svg" alt="" width="56" height="56">
+      <h1>ResQ AI</h1>
+      <p class="brand-tagline">Control Room</p>
+    </div>
+    <label class="field-label" for="signinName">Operator name</label>
+    <input class="text-input" id="signinName" placeholder="controller-meera" autocomplete="off">
+    <label class="field-label" for="signinRole">Role</label>
+    <select class="text-input" id="signinRole">
+      <option value="officer">Control Officer — incidents you handle</option>
+      <option value="supervisor">Supervisor — all incidents in the region</option>
+      <option value="admin">Administrator — everything, including audit</option>
+    </select>
+    <button class="btn btn-primary" id="signinGo" style="margin-top:18px">Enter control room</button>
+    <p class="signin-warn">
+      <b>Not authentication.</b> This selects an identity and role on this device only.
+      The backend has no auth layer, so nothing here is enforced server-side — but every
+      action you take is written to the process log under this name.
+    </p>
+  </div>
+</div>
+
 <header class="ctl-head">
   <div class="ctl-brand">
     <span class="ctl-logo" aria-hidden="true">
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M12 3L1 21H23L12 3Z" stroke="#f5a623" stroke-width="1.9" stroke-linejoin="round"/><path d="M12 10V14" stroke="#f5a623" stroke-width="1.9" stroke-linecap="round"/><circle cx="12" cy="17" r="1" fill="#f5a623"/></svg>
     </span>
     <div>
-      <h1>Control Room</h1>
+      <h1>ResQ AI <span class="ctl-sub">Control Room</span></h1>
       <p class="tiny dim" id="ctlStatus">Connecting…</p>
     </div>
   </div>
   <div class="ctl-head-actions">
-    <label class="operator-field">
-      <span class="tiny dim">Operator</span>
-      <input id="operatorName" type="text" autocomplete="off" spellcheck="false">
-    </label>
+    <span class="operator-field"><span class="tiny dim">Operator</span><b id="operatorName"></b></span>
     <button class="btn btn-sm btn-ghost" id="refreshAll">Refresh</button>
-    <a class="btn btn-sm btn-ghost" href="index.html">Citizen app</a>
+    <span class="role-badge" id="roleBadge"></span>
+    <button class="btn btn-sm btn-ghost" id="signOut">Sign out</button>
   </div>
 </header>
 

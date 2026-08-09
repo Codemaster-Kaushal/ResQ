@@ -6,7 +6,7 @@
  * survive a blackout: filing a report.
  */
 
-const CACHE = 'resq-shell-v1';
+const CACHE = 'resq-shell-v2';
 
 const SHELL = [
   './',
@@ -21,6 +21,10 @@ const SHELL = [
   './js/ui.js',
   './js/geo.js',
   './js/citizen.js',
+  './js/i18n.js',
+  './js/profile.js',
+  './js/signals.js',
+  './js/voice.js',
   './js/control.js',
   './assets/leaflet/leaflet.css',
   './assets/leaflet/leaflet.js',

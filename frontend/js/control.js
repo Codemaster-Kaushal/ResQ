@@ -1,11 +1,18 @@
-/* RescueNet — control room.
+/* ResQ AI — control room.
  *
  * The operator half of the backend: the severity queue and the right to
  * override it, dispatch, human review of flagged reports, the responder
  * roster, the process log, and the governance record.
  *
- * Every action here is attributed to a named operator, because the backend
- * records who did it and a blank attribution would make that record useless.
+ * Every action is attributed to a named operator, because the backend records
+ * who did it and a blank attribution would make that record useless.
+ *
+ * ROLE SEPARATION IS ADVISORY HERE. The backend has no authentication and no
+ * per-incident authorisation, so the scoping below is a UI affordance, not a
+ * security boundary — the sign-in screen says so plainly rather than implying
+ * a protection that does not exist. What *is* real is the attribution: every
+ * override and review lands in the append-only process log under this name,
+ * which is what makes "my incidents" derivable at all.
  */
 
 import { api } from './api.js';
@@ -22,6 +29,7 @@ const state = {
 
 const TABS = [
   { key: 'overview', label: 'Overview' },
+  { key: 'mine', label: 'My incidents', count: 'mine' },
   { key: 'queue', label: 'Queue', count: 'queue' },
   { key: 'review', label: 'Review', count: 'flagged' },
   { key: 'dispatch', label: 'Dispatch' },
@@ -31,14 +39,33 @@ const TABS = [
   { key: 'governance', label: 'Governance' },
 ];
 
-const operator = {
-  get name() {
-    return localStorage.getItem('resq.operator') || 'controller-1';
-  },
-  set name(value) {
-    localStorage.setItem('resq.operator', value || 'controller-1');
-  },
+const ROLES = {
+  officer: { label: 'Control Officer', scope: 'Incidents you have handled' },
+  supervisor: { label: 'Supervisor', scope: 'All incidents in the region' },
+  admin: { label: 'Administrator', scope: 'Everything, including the audit log' },
 };
+
+const operator = {
+  get name() { return localStorage.getItem('resq.operator') || ''; },
+  set name(v) { localStorage.setItem('resq.operator', v); },
+  get role() { return localStorage.getItem('resq.role') || 'officer'; },
+  set role(v) { localStorage.setItem('resq.role', v); },
+  get signedIn() { return Boolean(this.name); },
+  signOut() {
+    localStorage.removeItem('resq.operator');
+    localStorage.removeItem('resq.role');
+  },
+  /** A Control Officer works their own incidents; seniors see everything. */
+  get seesEverything() { return this.role !== 'officer'; },
+};
+
+/* Cases this operator has touched, read back out of the event log. The backend
+ * does not assign incidents to operators, so "mine" is derived from what this
+ * name has actually done — which is the only honest definition available. */
+async function myCaseIds() {
+  const { items } = await api.events({ resource: `operator:${operator.name}`, limit: 500 });
+  return new Set(items.map((e) => e.case_id));
+}
 
 // --- Shell ---------------------------------------------------------------
 
@@ -92,6 +119,7 @@ const VIEWS = {
       queue: queue.total,
       flagged: flagged.total,
       bottlenecks: bottlenecks.bottlenecks.length,
+      mine: (await myCaseIds()).size,
     };
     renderTabs();
 
@@ -126,6 +154,47 @@ const VIEWS = {
       <div class="metric"><small style="font-size:13.5px;color:var(--text-primary)">${esc(governance.scoring.honest_summary)}</small></div>`;
 
     bindQueueRows();
+  },
+
+  // --- My incidents ------------------------------------------------------
+
+  async mine() {
+    const ids = await myCaseIds();
+    state.counts.mine = ids.size;
+    renderTabs();
+
+    if (!ids.size) {
+      $('#ctlMain').innerHTML = `<div class="restricted">
+        <div class="lock-line">🔒 ${esc(ROLES[operator.role].label)} · ${esc(ROLES[operator.role].scope)}</div>
+        You have not acted on any incident yet.<br><br>
+        Pin, dispatch or review something from the Queue and it appears here, attributed to
+        <b>${esc(operator.name)}</b> in the process log.
+      </div>`;
+      return;
+    }
+
+    const reports = await Promise.all([...ids].slice(0, 40).map((id) => api.getReport(id).catch(() => null)));
+    const rows = reports.filter(Boolean);
+
+    $('#ctlMain').innerHTML = `
+      <div class="lock-line">🔒 Authorised access · ${esc(ROLES[operator.role].label)} · ${esc(operator.name)}</div>
+      <p class="tiny dim" style="margin-bottom:14px">
+        Derived from the process log: these are the cases you have personally acted on.
+      </p>
+      <div class="stack">${rows.map((r) => {
+        const band = severityBand(r.severity_score);
+        return `<div class="ctl-row sev-${band}">
+          <div class="body">
+            <div class="headline" data-open="${r.id}">${esc(r.text)}</div>
+            <div class="metaline">
+              <span class="pill sev-chip sev-${band}">Severity ${r.severity_score}</span>
+              <span class="pill status-chip status-${esc(r.status)}">${esc(titleCase(r.status))}</span>
+              <span class="tiny dim">${ago(r.client_created_at)}</span>
+            </div>
+          </div>
+        </div>`;
+      }).join('')}</div>`;
+    bindOpen();
   },
 
   // --- Queue -------------------------------------------------------------
@@ -508,8 +577,20 @@ async function openDrawer(reportId) {
     ]);
     const band = severityBand(report.severity_score);
 
+    const restricted = !operator.seesEverything && !(await myCaseIds()).has(reportId);
+
     $('#drawerTitle').textContent = titleCase(report.incident_type || 'Report');
     $('#drawerBody').innerHTML = `
+      ${restricted ? `<div class="restricted" style="margin-bottom:14px">
+        <div class="lock-line">🔒 Not assigned to you</div>
+        You are signed in as <b>${esc(operator.name)}</b> (${esc(ROLES[operator.role].label)}).
+        A Control Officer normally works only their own incidents. Details are still shown
+        because the backend has no authorisation layer to enforce this — that is a gap, not a
+        feature.
+      </div>` : `<div class="lock-line">🔒 Authorised access · assigned to ${esc(operator.name)}</div>`}
+
+      ${aiPanel(report)}
+
       <div class="ctl-row sev-${band}" style="margin-bottom:14px">
         <div class="body">
           <p style="font-size:15px;line-height:1.5">${esc(report.text)}</p>
@@ -533,6 +614,37 @@ async function openDrawer(reportId) {
   } catch (err) {
     $('#drawerBody').innerHTML = `<div class="empty">${esc(err.message)}</div>`;
   }
+}
+
+/* AI insights, control-room only.
+ *
+ * The citizen app deliberately shows none of this: reason codes and confidence
+ * are internal reasoning. An operator needs them to decide, and needs to see
+ * clearly which part is the model's opinion and which part is theirs. */
+function aiPanel(report) {
+  const risk = (report.severity_reasons || [])
+    .filter((r) => r.code.startsWith('LIFE_RISK_') || r.code.startsWith('VULNERABILITY_') || r.code.startsWith('PEOPLE_'))
+    .map((r) => reasonLabel(r.code));
+
+  const humanReview = (report.authenticity_reasons || []).find((r) => r.code.startsWith('HUMAN_REVIEW'));
+  const aiVerdict = severityLabel(report.severity_score).toUpperCase();
+  const humanVerdict = humanReview
+    ? (humanReview.code.endsWith('VERIFIED') ? 'CONFIRMED' : 'REJECTED')
+    : report.status === 'flagged' ? 'PENDING REVIEW' : 'NOT REQUIRED';
+
+  return `<div class="ai-panel">
+    <div class="ai-head">AI assessment</div>
+    <div class="ai-scores">
+      <div class="ai-score"><b style="color:var(--sev-${severityBand(report.severity_score)})">${report.severity_score ?? '—'}</b><span>SEVERITY</span></div>
+      <div class="ai-score"><b>${report.authenticity_score ?? '—'}</b><span>AUTHENTICITY</span></div>
+      <div class="ai-score"><b>${esc(report.scoring_provider || '—')}</b><span>SCORED BY</span></div>
+    </div>
+    ${risk.length ? `<div style="margin-top:12px">${risk.map((r) => `<div class="ai-factor">${esc(r)}</div>`).join('')}</div>` : ''}
+    <div class="decision-split">
+      <div class="decision ai"><span>AI recommends</span><b>${esc(aiVerdict)}</b></div>
+      <div class="decision human"><span>Human decision</span><b>${esc(humanVerdict)}</b></div>
+    </div>
+  </div>`;
 }
 
 function reasonTable(title, reasons) {
@@ -559,19 +671,55 @@ async function checkHealth() {
   }
 }
 
-function boot() {
-  const input = $('#operatorName');
-  input.value = operator.name;
-  input.addEventListener('change', () => {
-    operator.name = input.value.trim();
-    toast(`Acting as ${operator.name}`);
-  });
+function paintOperator() {
+  $('#operatorName').textContent = operator.name;
+  const badge = $('#roleBadge');
+  badge.textContent = ROLES[operator.role].label;
+  badge.className = `role-badge ${operator.role}`;
+}
 
+function showSignIn() {
+  const gate = $('#signin');
+  gate.hidden = false;
+  $('#signinName').value = operator.name || '';
+  $('#signinRole').value = operator.role;
+
+  const enter = () => {
+    const name = $('#signinName').value.trim();
+    if (!name) { $('#signinName').focus(); return; }
+    operator.name = name;
+    operator.role = $('#signinRole').value;
+    gate.hidden = true;
+    paintOperator();
+    checkHealth();
+    render();
+  };
+  $('#signinGo').addEventListener('click', enter);
+  $('#signinName').addEventListener('keydown', (e) => { if (e.key === 'Enter') enter(); });
+}
+
+function boot() {
+  // Bind everything that outlives the sign-in gate *before* the gate, or these
+  // handlers never attach on a first visit and the drawer becomes impossible
+  // to close.
+  $('#signOut').addEventListener('click', () => {
+    operator.signOut();
+    window.location.reload();
+  });
   $('#refreshAll').addEventListener('click', () => { checkHealth(); render(); });
   $('#drawerClose').addEventListener('click', () => { $('#drawer').hidden = true; });
   $('#drawer').addEventListener('click', (e) => {
     if (e.target.id === 'drawer') $('#drawer').hidden = true;
   });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') $('#drawer').hidden = true;
+  });
+
+  if (!operator.signedIn) {
+    showSignIn();
+    return;
+  }
+  paintOperator();
 
   checkHealth();
   render();

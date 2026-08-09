@@ -2,14 +2,12 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<!-- viewport-fit=cover so the app can paint under the notch and home bar; the
-     safe-area insets in the CSS keep content clear of both. -->
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=5">
 <meta name="theme-color" content="#16110d">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="description" content="RescueNet — report an emergency and get help by severity, not by queue position.">
-<title>RescueNet</title>
+<meta name="description" content="ResQ AI — AI that gets help where it matters.">
+<title>ResQ AI</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
@@ -22,14 +20,58 @@
 
 <div class="app" id="app">
 
-  <!-- ============================ HOME ============================ -->
+  <!-- ======================= ONBOARDING ======================= -->
+  <section class="screen is-modal onboard" id="screen-onboard" style="z-index:50">
+    <div class="onboard-body scroll">
+      <div class="brand-lockup">
+        <img src="icons/icon.svg" alt="" width="64" height="64">
+        <h1>ResQ AI</h1>
+        <p class="brand-tagline" data-i18n="app.tagline">AI that gets help where it matters</p>
+      </div>
+
+      <div id="onboardStep1">
+        <h2 class="onboard-h" data-i18n="onboard.language">Choose your language</h2>
+        <p class="tiny dim center-text" data-i18n="onboard.languageHint"></p>
+        <div class="lang-list" id="langList"></div>
+        <button class="btn btn-primary" id="langContinue" data-i18n="onboard.continue">Continue</button>
+      </div>
+
+      <div id="onboardStep2" hidden>
+        <h2 class="onboard-h" data-i18n="onboard.how">How would you like to use ResQ AI?</h2>
+        <button class="mode-card" id="modeAnon">
+          <span class="mode-icon" aria-hidden="true">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="8" r="3.4" stroke="currentColor" stroke-width="1.8"/><path d="M5 20c0-3.6 3.1-6 7-6s7 2.4 7 6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          </span>
+          <span class="grow">
+            <strong data-i18n="onboard.anon">Continue anonymously</strong>
+            <em data-i18n="onboard.anonHint"></em>
+          </span>
+        </button>
+        <button class="mode-card" id="modeAccount">
+          <span class="mode-icon" aria-hidden="true">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M12 3L19 6v5c0 5-3 8.5-7 10-4-1.5-7-5-7-10V6l7-3Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M9.5 12l1.8 1.8L15 10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </span>
+          <span class="grow">
+            <strong data-i18n="onboard.account">Create / Sign in</strong>
+            <em data-i18n="onboard.accountHint"></em>
+          </span>
+        </button>
+        <p class="tiny dim center-text" style="margin-top:14px">
+          No password is required in this prototype — an account here means an
+          emergency profile stored on this device.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ======================= HOME ======================= -->
   <section class="screen" id="screen-home" data-root>
     <header class="home-head">
       <div class="grow">
-        <h1>RescueNet</h1>
-        <p class="status-line" id="systemStatus">Checking system…</p>
+        <h1>ResQ AI</h1>
+        <p class="status-line" id="systemStatus"><span class="dot"></span><span data-i18n="app.tagline"></span></p>
       </div>
-      <button class="avatar" id="identityBtn" aria-label="Your reporter identity"></button>
+      <button class="avatar" id="identityBtn" data-i18n-label="profile.title"></button>
     </header>
 
     <div id="connBanner"></div>
@@ -40,119 +82,155 @@
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M12 3L1 21H23L12 3Z" stroke="#2a1c14" stroke-width="1.8" stroke-linejoin="round"/><path d="M12 10V14" stroke="#2a1c14" stroke-width="1.8" stroke-linecap="round"/><circle cx="12" cy="17" r="1" fill="#2a1c14"/></svg>
         </span>
         <span class="grow">
-          <strong>Report an emergency</strong>
-          <em>Describe what is happening — severity decides who gets help first</em>
+          <strong data-i18n="home.reportTitle">Report an emergency</strong>
+          <em data-i18n="home.reportSub"></em>
         </span>
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M9 6L15 12L9 18" stroke="#2a1c14" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button>
 
+      <div id="activeHelp"></div>
+
       <div class="stat-grid" id="statGrid"></div>
 
-      <div class="section-title">Incidents near you</div>
+      <div class="section-title" data-i18n="home.publicSafety">Public safety near you</div>
       <div class="map-shell">
         <div id="homeMap" class="map-canvas"></div>
-        <button class="recenter" id="recenterBtn" aria-label="Recentre the map">
+        <button class="recenter" id="recenterBtn" data-i18n-label="common.refresh">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="4" stroke="currentColor" stroke-width="1.8"/><path d="M12 2V5M12 19V22M2 12H5M19 12H22" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
         </button>
       </div>
-      <p class="tiny dim gps-line" id="gpsLine">Locating…</p>
+      <p class="tiny dim gps-line" id="gpsLine"></p>
 
-      <div class="section-title">Highest priority right now</div>
-      <div id="homeQueue" class="stack"></div>
+      <div id="homeAlerts" class="stack"></div>
     </div>
 
     <nav class="tabbar" id="tabbar"></nav>
   </section>
 
-  <!-- ============================ REPORT ============================ -->
+  <!-- ======================= REPORT ======================= -->
   <section class="screen" id="screen-report">
     <header class="topbar">
-      <button class="icon-btn" data-back aria-label="Back">
+      <button class="icon-btn" data-back data-i18n-label="common.back">
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M15 5L8 12L15 19" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button>
-      <h2>Report an emergency</h2>
+      <h2 data-i18n="report.title">Report an emergency</h2>
       <span class="icon-btn" aria-hidden="true"></span>
     </header>
 
     <div class="scroll pad">
-      <label class="field-label" for="reportText">What is happening?</label>
-      <textarea id="reportText" class="textarea" maxlength="5000" rows="5"
-        placeholder="Describe the incident. Mention people trapped, injuries, children or elderly if you can — it changes how urgently this is handled."></textarea>
-      <div class="spread tiny dim">
-        <span id="severityHint">The more detail, the more accurately it is ranked.</span>
-        <span id="reportCount">0/5000</span>
+      <label class="field-label" for="reportText" data-i18n="report.what">What is happening?</label>
+      <textarea id="reportText" class="textarea" maxlength="4000" rows="4"
+        data-i18n-placeholder="report.placeholder"></textarea>
+
+      <button class="voice-btn" id="voiceBtn" hidden>
+        <span class="voice-dot" aria-hidden="true"></span>
+        <span id="voiceLabel" data-i18n="report.speak">HOLD TO SPEAK</span>
+      </button>
+      <div id="voiceResult"></div>
+
+      <div class="spread tiny dim" style="margin-top:6px">
+        <span id="reportLangNote"></span>
+        <span id="reportCount">0/4000</span>
       </div>
 
-      <div class="section-title">Photograph (optional)</div>
+      <div class="section-title" data-i18n="report.signals">What is the situation?</div>
+      <p class="tiny dim" style="margin:-4px 0 10px" data-i18n="report.signalsHint"></p>
+      <div class="signal-grid" id="signalGrid"></div>
+
+      <div class="section-title" data-i18n="report.photo">Photograph (optional)</div>
       <div class="photo-row">
         <label class="photo-btn">
           <input type="file" accept="image/*" capture="environment" id="cameraInput" hidden>
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M4 8C4 6.9 4.9 6 6 6H8L9.5 4H14.5L16 6H18C19.1 6 20 6.9 20 8V17C20 18.1 19.1 19 18 19H6C4.9 19 4 18.1 4 17V8Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><circle cx="12" cy="12.5" r="3.5" stroke="currentColor" stroke-width="1.8"/></svg>
-          <span>Camera</span>
+          <span data-i18n="report.camera">Camera</span>
         </label>
         <label class="photo-btn">
           <input type="file" accept="image/*" id="galleryInput" hidden>
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><rect x="3" y="5" width="18" height="14" rx="2" stroke="currentColor" stroke-width="1.8"/><circle cx="8.5" cy="10" r="1.6" stroke="currentColor" stroke-width="1.6"/><path d="M4 17L9 13L12 15.5L15 12L20 16" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/></svg>
-          <span>Gallery</span>
+          <span data-i18n="report.gallery">Gallery</span>
         </label>
       </div>
       <div id="photoPreview"></div>
 
-      <div class="section-title">Location</div>
+      <div id="attachOptions"></div>
+
+      <div class="section-title" data-i18n="report.location">Location</div>
       <div class="card location-card">
         <div class="location-map" id="reportMap"></div>
         <div class="location-meta">
-          <div class="spread">
-            <span class="muted tiny">Coordinates</span>
-            <span class="tiny" id="reportCoords">—</span>
-          </div>
-          <div class="spread">
-            <span class="muted tiny">GPS accuracy</span>
-            <span class="tiny" id="reportAccuracy">—</span>
-          </div>
+          <div class="spread"><span class="muted tiny">GPS</span><span class="tiny" id="reportCoords">—</span></div>
+          <div class="spread"><span class="muted tiny">Accuracy</span><span class="tiny" id="reportAccuracy">—</span></div>
           <p class="tiny dim" id="reportGeoNote"></p>
         </div>
       </div>
 
-      <button class="btn btn-primary submit-gap" id="submitReport">Submit report</button>
-      <p class="tiny dim center-text" id="submitNote">
-        Filed under <b id="submitPseudonym"></b>. No name or phone number is required.
+      <button class="btn btn-primary submit-gap" id="submitReport" data-i18n="report.submit">Submit report</button>
+      <p class="tiny dim center-text" style="margin-top:12px">
+        <span data-i18n="system.identity">Your identity</span>: <b id="submitPseudonym"></b>
       </p>
     </div>
   </section>
 
-  <!-- ============================ SOS ============================ -->
+  <!-- ======================= SOS ======================= -->
   <section class="screen is-modal" id="screen-sos">
     <div class="sos-body">
-      <p class="sos-kicker">Emergency SOS</p>
-      <div class="countdown">
-        <svg viewBox="0 0 260 260" aria-hidden="true">
-          <circle class="ring-bg" cx="130" cy="130" r="120"></circle>
-          <circle class="ring" id="sosRing" cx="130" cy="130" r="120"></circle>
-        </svg>
-        <div class="countdown-center">
-          <div class="countdown-number" id="sosNumber">5</div>
-          <div class="countdown-label" id="sosLabel">Sending in…</div>
-        </div>
+      <p class="sos-kicker">ResQ AI · SOS</p>
+
+      <!-- Stage 1: hold to arm -->
+      <div id="sosArm">
+        <button class="sos-dial" id="sosDial">
+          <svg class="sos-ring-svg" viewBox="0 0 260 260" aria-hidden="true">
+            <circle class="ring-bg" cx="130" cy="130" r="120"></circle>
+            <circle class="ring" id="sosRing" cx="130" cy="130" r="120"></circle>
+          </svg>
+          <span class="sos-dial-label" id="sosDialLabel" data-i18n="sos.hold">HOLD TO ACTIVATE</span>
+        </button>
+        <p class="sos-explain tiny dim" style="margin-top:18px">
+          Hold for two seconds. This avoids setting off an alert by accident.
+        </p>
       </div>
-      <p class="sos-explain" id="sosExplain">
-        A maximum-urgency report will be filed at your current location.
-      </p>
-      <div class="sos-actions">
-        <button class="btn btn-ghost sos-cancel" id="sosCancel">Cancel</button>
-        <button class="btn sos-send" id="sosSendNow">Send now</button>
+
+      <!-- Stage 2: armed, review and send -->
+      <div id="sosActive" hidden>
+        <div class="sos-badge" data-i18n="sos.active">SOS ACTIVE</div>
+        <div class="card sos-summary" id="sosSummary"></div>
+        <button class="btn sos-send" id="sosSend" data-i18n="sos.send">SEND SOS</button>
       </div>
+
+      <!-- Stage 3: outcome -->
+      <div id="sosResult" hidden>
+        <div class="sos-result-mark" id="sosResultMark">✓</div>
+        <div class="sos-badge" id="sosResultTitle"></div>
+        <div class="card sos-summary" id="sosResultBody"></div>
+        <button class="btn btn-primary" id="sosTrack" data-i18n="sos.track">TRACK MY HELP</button>
+      </div>
+
+      <button class="btn btn-ghost sos-cancel" id="sosCancel" data-i18n="sos.cancel">Cancel</button>
     </div>
   </section>
 
-  <!-- ============================ NEARBY ============================ -->
-  <section class="screen" id="screen-nearby">
+  <!-- ======================= TRACK MY HELP ======================= -->
+  <section class="screen" id="screen-track">
     <header class="topbar">
-      <button class="icon-btn" data-back aria-label="Back">
+      <button class="icon-btn" data-back data-i18n-label="common.back">
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M15 5L8 12L15 19" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button>
-      <h2>Nearby incidents</h2>
-      <button class="icon-btn" id="nearbyRefresh" aria-label="Refresh">
+      <h2 data-i18n="track.title">Track my help</h2>
+      <button class="icon-btn" id="trackRefresh" data-i18n-label="common.refresh">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M20 12A8 8 0 1 1 17.7 6.3" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/><path d="M20 4V9H15" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+    </header>
+    <div class="scroll pad" id="trackBody"></div>
+  </section>
+
+  <!-- ======================= NEARBY ======================= -->
+  <section class="screen" id="screen-nearby">
+    <header class="topbar">
+      <button class="icon-btn" data-back data-i18n-label="common.back">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M15 5L8 12L15 19" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <h2 data-i18n="nearby.title">Nearby</h2>
+      <button class="icon-btn" id="nearbyRefresh" data-i18n-label="common.refresh">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M20 12A8 8 0 1 1 17.7 6.3" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/><path d="M20 4V9H15" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button>
     </header>
@@ -161,14 +239,14 @@
     <nav class="tabbar" data-tabbar></nav>
   </section>
 
-  <!-- ============================ MY REPORTS ============================ -->
+  <!-- ======================= MY REPORTS ======================= -->
   <section class="screen" id="screen-mine">
     <header class="topbar">
-      <button class="icon-btn" data-back aria-label="Back">
+      <button class="icon-btn" data-back data-i18n-label="common.back">
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M15 5L8 12L15 19" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button>
-      <h2>My reports</h2>
-      <button class="icon-btn" id="mineRefresh" aria-label="Refresh">
+      <h2 data-i18n="reports.title">My reports</h2>
+      <button class="icon-btn" id="mineRefresh" data-i18n-label="common.refresh">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M20 12A8 8 0 1 1 17.7 6.3" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/><path d="M20 4V9H15" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button>
     </header>
@@ -176,40 +254,50 @@
     <nav class="tabbar" data-tabbar></nav>
   </section>
 
-  <!-- ============================ REPORT DETAIL ============================ -->
-  <section class="screen" id="screen-detail">
+
+  <!-- ======================= PROFILE ======================= -->
+  <section class="screen" id="screen-profile">
     <header class="topbar">
-      <button class="icon-btn" data-back aria-label="Back">
+      <button class="icon-btn" data-back data-i18n-label="common.back">
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M15 5L8 12L15 19" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button>
-      <h2>Report detail</h2>
+      <h2 data-i18n="profile.title">Profile</h2>
       <span class="icon-btn" aria-hidden="true"></span>
     </header>
-    <div class="scroll pad" id="detailBody"></div>
+    <div class="scroll pad" id="profileBody"></div>
   </section>
 
-  <!-- ============================ RESPONDERS ============================ -->
-  <section class="screen" id="screen-responders">
+  <!-- ======================= EMERGENCY PROFILE ======================= -->
+  <section class="screen" id="screen-emergency">
     <header class="topbar">
-      <button class="icon-btn" data-back aria-label="Back">
+      <button class="icon-btn" data-back data-i18n-label="common.back">
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M15 5L8 12L15 19" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button>
-      <h2>Responders</h2>
-      <button class="icon-btn" id="respondersRefresh" aria-label="Refresh">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M20 12A8 8 0 1 1 17.7 6.3" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/><path d="M20 4V9H15" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>
-      </button>
+      <h2 data-i18n="profile.emergency">Emergency profile</h2>
+      <span class="icon-btn" aria-hidden="true"></span>
     </header>
-    <div class="scroll pad" id="respondersList"></div>
-    <nav class="tabbar" data-tabbar></nav>
+    <div class="scroll pad" id="emergencyBody"></div>
   </section>
 
-  <!-- ============================ SYSTEM ============================ -->
+  <!-- ======================= FAMILY ======================= -->
+  <section class="screen" id="screen-family">
+    <header class="topbar">
+      <button class="icon-btn" data-back data-i18n-label="common.back">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M15 5L8 12L15 19" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <h2 data-i18n="profile.family">My family</h2>
+      <span class="icon-btn" aria-hidden="true"></span>
+    </header>
+    <div class="scroll pad" id="familyBody"></div>
+  </section>
+
+  <!-- ======================= SYSTEM ======================= -->
   <section class="screen" id="screen-system">
     <header class="topbar">
-      <button class="icon-btn" data-back aria-label="Back">
+      <button class="icon-btn" data-back data-i18n-label="common.back">
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M15 5L8 12L15 19" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button>
-      <h2>System &amp; transparency</h2>
+      <h2 data-i18n="system.title">System &amp; privacy</h2>
       <span class="icon-btn" aria-hidden="true"></span>
     </header>
     <div class="scroll pad" id="systemBody"></div>

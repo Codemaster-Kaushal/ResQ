@@ -1,7 +1,7 @@
 {
-  "name": "RescueNet — Emergency Reporting",
-  "short_name": "RescueNet",
-  "description": "Report an emergency and get help ordered by severity, not by queue position.",
+  "name": "ResQ AI — Emergency Reporting",
+  "short_name": "ResQ AI",
+  "description": "AI that gets help where it matters. Report an emergency and get help ordered by severity.",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",

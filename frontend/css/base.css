@@ -1,4 +1,4 @@
-/* RescueNet — shared tokens and primitives.
+/* ResQ AI — shared tokens and primitives.
    Built mobile-first: the phone frame you see on a desktop is a presentation
    affordance only. On an actual handset the app is full-bleed and respects the
    device's safe areas. */
@@ -117,6 +117,11 @@ button { background: none; border: none; cursor: pointer; }
   z-index: 1;
 }
 .screen.is-active { transform: translateX(0); }
+
+/* A screen slid off-stage is still laid out and still hit-tested, so without
+   this a dismissed modal keeps swallowing taps meant for the screen beneath
+   it. Only pointer-events is disabled, so the slide transition still runs. */
+.screen:not(.is-active):not([data-root]) { pointer-events: none; }
 .screen.is-modal { transform: translateY(100%); }
 .screen.is-modal.is-active { transform: translateY(0); }
 

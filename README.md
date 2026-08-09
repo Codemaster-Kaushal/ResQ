@@ -1,9 +1,11 @@
-# RescueNet AI — Backend
+# ResQ AI
+
+> *AI that gets help where it matters.*
 
 Severity-ordered, authenticity-verified emergency dispatch.
 
 Emergency systems process reports in arrival order, so a sprained ankle reported at 09:00 is
-actioned before a building collapse reported at 09:05. RescueNet replaces arrival-order dispatch
+actioned before a building collapse reported at 09:05. ResQ AI replaces arrival-order dispatch
 with **severity-ordered, authenticity-verified dispatch**, and records every state transition as a
 process event so response bottlenecks are measurable rather than anecdotal.
 
@@ -15,7 +17,7 @@ Specs: [PRD](PRD-RescueNet-Backend.md) · [TRD](TRD-RescueNet-Backend.md) · Fro
 | Part | State |
 |---|---|
 | **Backend** — 16 endpoints, 509 tests, all ten TRD phases | Complete |
-| **Frontend** — citizen PWA + control room, wired to every endpoint | Complete |
+| **Frontend** — citizen PWA (6 languages, offline SOS) + separate control room | Complete |
 | **AI intelligence layer** — remote provider integration | Pending (Person 2); the local scorer runs in its place today |
 
 ---
