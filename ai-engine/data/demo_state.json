@@ -1,0 +1,118 @@
+{
+  "image_hashes": [
+    {
+      "report_id": "RPT-001",
+      "phash": "85957a5585fa7a05"
+    },
+    {
+      "report_id": "RPT-002",
+      "phash": "9ea1e17a685e6586"
+    },
+    {
+      "report_id": "RPT-003",
+      "phash": "b7b74848b74848b7"
+    },
+    {
+      "report_id": "RPT-004",
+      "phash": "a6e6791995781987"
+    }
+  ],
+  "recent_reports": [
+    {
+      "report_id": "RPT-001",
+      "pseudonym": "USER-REAL-001",
+      "lat": 12.9716,
+      "lon": 77.5946,
+      "timestamp": "2026-08-09T10:00:00+00:00",
+      "incident_type": "flooding"
+    },
+    {
+      "report_id": "RPT-002",
+      "pseudonym": "USER-STRUCT-002",
+      "lat": 12.9728,
+      "lon": 77.5952,
+      "timestamp": "2026-08-09T10:02:00+00:00",
+      "incident_type": "other"
+    },
+    {
+      "report_id": "RPT-003",
+      "pseudonym": "USER-INFRA-003",
+      "lat": 12.9735,
+      "lon": 77.5964,
+      "timestamp": "2026-08-09T10:04:00+00:00",
+      "incident_type": "other"
+    },
+    {
+      "report_id": "RPT-004",
+      "pseudonym": "USER-WATER-004",
+      "lat": 12.9742,
+      "lon": 77.5972,
+      "timestamp": "2026-08-09T10:06:00+00:00",
+      "incident_type": "other"
+    },
+    {
+      "report_id": "RPT-005",
+      "pseudonym": "USER-DUP-005",
+      "lat": 12.9716,
+      "lon": 77.5946,
+      "timestamp": "2026-08-09T10:08:00+00:00",
+      "incident_type": "flooding"
+    },
+    {
+      "report_id": "RPT-006",
+      "pseudonym": "USER-GEO-006",
+      "lat": 500,
+      "lon": 77.5946,
+      "timestamp": "2026-08-09T10:10:00+00:00",
+      "incident_type": "other"
+    },
+    {
+      "report_id": "RPT-007",
+      "pseudonym": "USER-IMP-008",
+      "lat": 12.975,
+      "lon": 77.598,
+      "timestamp": "2038-01-01T00:00:00+00:00",
+      "incident_type": "other"
+    },
+    {
+      "report_id": "RPT-008",
+      "pseudonym": "USER-IMP-008",
+      "lat": 18.5204,
+      "lon": 73.8567,
+      "timestamp": "2026-08-09T10:15:00+00:00",
+      "incident_type": "other"
+    },
+    {
+      "report_id": "RPT-009",
+      "pseudonym": "USER-CORR-009",
+      "lat": 12.9718,
+      "lon": 77.595,
+      "timestamp": "2026-08-09T10:20:00+00:00",
+      "incident_type": "flooding"
+    },
+    {
+      "report_id": "RPT-010",
+      "pseudonym": "USER-CORR-010",
+      "lat": 12.9723,
+      "lon": 77.5955,
+      "timestamp": "2026-08-09T10:22:00+00:00",
+      "incident_type": "flooding"
+    },
+    {
+      "report_id": "RPT-011",
+      "pseudonym": "USER-CORR-011",
+      "lat": 12.9727,
+      "lon": 77.596,
+      "timestamp": "2026-08-09T10:24:00+00:00",
+      "incident_type": "flooding"
+    },
+    {
+      "report_id": "RPT-012",
+      "pseudonym": "USER-TEXT-012",
+      "lat": 12.976,
+      "lon": 77.5987,
+      "timestamp": "2026-08-09T10:26:00+00:00",
+      "incident_type": "other"
+    }
+  ]
+}

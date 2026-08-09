@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+venv/
+.venv/
+env/
+.env/
+ENV/
+
+# Secrets — NEVER commit
+.env
+.env.local
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# AI model binaries
+*.bin
+*.gguf
+*.safetensors
+*.ckpt
+*.pt
+*.pth
+models/
+ollama_data/
+
+# Logs
+*.log
+logs/

@@ -12,13 +12,13 @@ process event so response bottlenecks are measurable rather than anecdotal.
 **Team:** CtrlWin — Lakshya Arora, Taashu Sharma, Kaushal Choudhary
 **Event:** Hackverse 2.0, MIT Bengaluru
 
-Specs: [PRD](PRD-RescueNet-Backend.md) · [TRD](TRD-RescueNet-Backend.md) · Frontend: [frontend/README.md](frontend/README.md)
+Specs: [PRD](PRD-RescueNet-Backend.md) · [TRD](TRD-RescueNet-Backend.md) · Frontend: [frontend/README.md](frontend/README.md) · AI engine: [ai-engine/README.md](ai-engine/README.md)
 
 | Part | State |
 |---|---|
-| **Backend** — 16 endpoints, 509 tests, all ten TRD phases | Complete |
+| **Backend** — 16 endpoints, 534 tests, all ten TRD phases | Complete |
 | **Frontend** — citizen PWA (6 languages, offline SOS) + separate control room | Complete |
-| **AI intelligence layer** — remote provider integration | Pending (Person 2); the local scorer runs in its place today |
+| **AI intelligence layer** — IBM Granite via Ollama, on-premise ([ai-engine/](ai-engine/)) | Complete |
 
 ---
 
@@ -66,6 +66,76 @@ cp .env.example .env
 
 ---
 
+## The AI layer
+
+Scoring is **two-pass**, and the split is the whole design:
+
+```
+report arrives
+   │
+   ├─ PASS 1   ~1 ms, always      rule scorer → severity → enters the queue
+   │                              dispatch can happen immediately
+   │
+   ├─ TRUST    inline             the engine's authenticity checks — deterministic,
+   │                              no model, so it costs nothing
+   │
+   └─ PASS 2   background, selective   IBM Granite re-scores → replaces the score,
+                                       emits AI_RESCORED, the queue reorders
+```
+
+**Nobody's help ever waits on a language model.** Granite 8B is roughly 15 s per report on CPU —
+240 reports/hour on one stream. A mass-casualty event produces thousands in the first hour, so if
+scoring blocked the queue, severity-ordered dispatch would stop meaning anything at exactly the
+moment it matters. Pass 1 ranks every report in about a millisecond; Granite improves the ranking
+afterwards. Measured on this machine: **30 reports accepted in 0.2 s, all 30 ranked and queued
+immediately.**
+
+Nothing runs on the phone. The handset captures, downscales and uploads; every model runs
+server-side. A low-end phone at 5% battery is a *client*, which is the only way the system works
+in a real disaster.
+
+### Pass 2 runs only where it could change the outcome
+
+| Trigger | Why |
+|---|---|
+| Pass 1 returned `other` | The rules did not understand the text. This is where the model earns its keep — and it is what every non-English report hits: a Kannada report scores 10/`other` on the rules and **45/`trapped_persons`** after Granite. |
+| Severity within ±5 of a band boundary (40 / 60 / 80) | The band is what an operator acts on. |
+| The report is in the top N of the queue | Spend inference on what is about to be dispatched. |
+
+Roughly a 5× reduction in inference against ranking every report, with no loss where it counts.
+
+### Running it
+
+The engine is **off by default** — the backend runs fully without it.
+
+```bash
+ollama serve &
+ollama pull granite3.3:8b
+AI_ENGINE_ENABLED=true .venv/bin/uvicorn app.main:app
+```
+
+`GET /api/governance` reports what actually scored the reports, not what is configured. All three
+states are distinguishable in its plain-English summary: Granite scoring, Granite reachable but
+not yet needed, and Granite enabled but unreachable.
+
+### What it does not do
+
+- **Images are not analysed.** The visual severity modifier is always zero. Photographs still
+  drive duplicate detection and EXIF checks; their *content* is never read. Governance says so in
+  as many words.
+- **The model cannot reject a report.** It returns a trust band; only a human can reject (FR-15).
+- **The seed stays deterministic.** It runs with the engine off so NFR-4 reproducibility holds and
+  its 34 self-checks keep their meaning.
+- **Prior-report state comes from the database, not the engine's `state.json`.** That file only
+  knows reports that passed through the engine; duplicates and corroboration are computed against
+  the real table.
+
+Reason codes from the model carry **no weights** — unlike the rule scorer, whose weights sum to
+the score. The control room shows `—` and says *"reason codes are not additive, so there is no
+total to show"* rather than printing a total that does not add up.
+
+---
+
 ## Phase status
 
 All ten phases are complete (TRD §7). Each was verified against its own acceptance criteria
@@ -83,6 +153,7 @@ before the next began.
 | 8 | Responder status lifecycle | ✅ Done |
 | 9 | Process event log, cycle-time mining, CSV export | ✅ Done |
 | 10 | Offline batch sync, governance endpoint, hardening, deploy | ✅ Done |
+| — | AI engine integration: two-pass scoring, Granite via Ollama | ✅ Done |
 
 ### The API
 
@@ -688,10 +759,15 @@ Every phase was checked against its own acceptance criteria before the next one 
 whole suite is re-run on each change.
 
 ```
-509 tests                    passing
-509 tests, network disabled  passing   (NFR-2)
+534 tests                    passing
+534 tests, network disabled  passing   (NFR-2)
 34 seed self-checks          passing
 ```
+
+The AI integration is verified live as well as in the suite: a report is queued in ~13 ms while
+Granite re-scores it in the background; the seeded duplicate pair is still detected with the engine
+on (proving the checks read the database, not the engine's own state file); and killing Ollama
+mid-run leaves reports scoring on the rules with governance reporting the outage honestly.
 
 The seed is self-verifying: after writing the dataset it re-measures its own fixtures — the
 duplicate pair's pHash distance, the corroboration radius and window, the stale gap, that the
@@ -710,5 +786,6 @@ note on this machine's ROS environment below.
 - `ProcessEvent` is append-only.
 - No auto-rejection of any report by any automated path — rejection is a human action, and is
   itself a logged event.
-- No new dependencies after Phase 9.
+- No new dependencies after Phase 9. *(The AI engine integration held to this: the code paths it
+  loads need only `httpx` and `pydantic`, both already pinned.)*
 - Commit at every passing acceptance criterion.

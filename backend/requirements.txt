@@ -24,3 +24,10 @@ piexif>=1.1.3                    # EXIF geo-time consistency
 
 # --- HTTP client for AI providers (Phase 4) ---
 httpx>=0.27,<1.0
+
+# --- ResQ AI engine (../ai-engine, imported in-process) ----------------------
+# No additions required: the engine's code paths we load need only httpx and
+# pydantic, both already pinned above. Its own requirements.txt lists numpy and
+# scikit-learn, but nothing we import uses them — so the backend's dependency
+# set is unchanged and TRD §10's freeze still holds.
+# Ollama itself is a separate binary, not a Python package.

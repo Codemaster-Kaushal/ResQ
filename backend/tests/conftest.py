@@ -23,6 +23,10 @@ os.environ["ENABLE_DEBUG_ROUTES"] = "true"
 # `extra` key is a KeyError, not a shadowed field), and a quiet test suite would let
 # that reach production as a 500. pytest captures the output, so it costs nothing.
 os.environ["LOG_LEVEL"] = "INFO"
+# The AI engine is off for the suite: Granite behind a timeout is not
+# deterministic, and these tests pin exact severities. Adapter tests
+# turn it on explicitly.
+os.environ["AI_ENGINE_ENABLED"] = "false"
 
 from fastapi.testclient import TestClient  # noqa: E402
 

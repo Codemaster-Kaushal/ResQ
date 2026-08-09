@@ -320,6 +320,161 @@ async def triage_report(
         return None
 
 
+# --- Two-pass scoring: Granite re-scores, selectively --------------------------------
+#
+# Granite 8B is ~15 s per report on CPU. If scoring blocked the queue, a
+# mass-casualty event would produce reports faster than they could be ranked and
+# severity-ordered dispatch would stop meaning anything.
+#
+# So Pass 1 (the deterministic scorer above) always runs and always wins the
+# race: the report is queued and dispatchable in milliseconds. Pass 2 runs
+# afterwards in the background, and only on reports where a better answer could
+# actually change what an operator does.
+
+SEVERITY_BANDS = (40, 60, 80)
+
+
+def needs_ai_rescore(report: Report) -> tuple[bool, str]:
+    """Should Granite look at this report? Returns (decision, why)."""
+    if not settings.ai_engine_enabled:
+        return False, "engine disabled"
+    if report.scoring_provider == "local_granite":
+        return False, "already scored by the model"
+    if report.severity_score is None:
+        return False, "not yet scored by the rules"
+
+    # The rules did not recognise the incident at all. This is where the model
+    # earns its keep, and it is exactly what a non-English report hits today.
+    if settings.ai_escalate_on_other and report.incident_type == IncidentType.OTHER:
+        return True, "rules returned 'other'"
+
+    # A score sitting next to a band boundary is one an operator acts on
+    # differently depending which side it lands.
+    if settings.ai_escalate_near_band:
+        margin = settings.ai_escalate_band_margin
+        if any(abs(report.severity_score - band) <= margin for band in SEVERITY_BANDS):
+            return True, "score is near a band boundary"
+
+    return False, "rules are confident and the band is clear"
+
+
+async def rescore_with_ai(report_id: uuid.UUID) -> bool:
+    """Pass 2. Replace the rule-based score with Granite's. Never raises.
+
+    Returns True when the model actually re-scored the report.
+    """
+    from app.ai.resq_engine import engine_provider
+
+    if not engine_provider.is_available():
+        return False
+
+    try:
+        with Session(engine) as session:
+            report = session.get(Report, report_id)
+            if report is None:
+                return False
+
+            wanted, why = needs_ai_rescore(report)
+            if not wanted:
+                logger.debug(
+                    "AI re-score skipped",
+                    extra={"report_id": str(report_id), "reason": why},
+                )
+                return False
+
+            before = report.severity_score
+            verdict = await engine_provider.score(report.text)
+
+            report.incident_type = verdict.incident_type
+            report.severity_score = verdict.score
+            report.severity_reasons = verdict.reasons
+            report.scoring_provider = verdict.provider or "local_granite"
+            session.add(report)
+
+            emit_event(
+                session,
+                case_id=report.id,
+                activity=Activity.AI_RESCORED,
+                resource=f"scorer:{verdict.provider}",
+                metadata={
+                    "escalated_because": why,
+                    "severity_before": before,
+                    "severity_after": verdict.score,
+                    "severity_label": verdict.label,
+                    "incident_type": verdict.incident_type.value,
+                    "model": verdict.model,
+                    "confidence": verdict.confidence,
+                    "fallback_state": verdict.fallback_state,
+                },
+            )
+            session.commit()
+
+        logger.info(
+            "report re-scored by the model",
+            extra={
+                "report_id": str(report_id),
+                "severity_before": before,
+                "severity_after": verdict.score,
+                "model": verdict.model,
+                "escalated_because": why,
+            },
+        )
+        return True
+
+    except Exception:
+        # Pass 1's score stands. A failed re-score costs precision, never the report.
+        logger.exception(
+            "AI re-score failed; the rule-based score stands",
+            extra={"report_id": str(report_id)},
+        )
+        return False
+
+
+async def rescore_pending(limit: int | None = None) -> int:
+    """Sweep the queue for reports worth a second look from the model.
+
+    Also covers the top of the queue: whatever is about to be dispatched
+    deserves the better score even if the rules were confident about it.
+    """
+    if not settings.ai_engine_enabled:
+        return 0
+
+    from app.services.priority import build_queue
+
+    with Session(engine) as session:
+        candidates: list[uuid.UUID] = []
+
+        for report in session.exec(
+            select(Report).where(Report.scoring_provider != "local_granite")
+        ).all():
+            wanted, _ = needs_ai_rescore(report)
+            if wanted:
+                candidates.append(report.id)
+
+        if settings.ai_escalate_top_n:
+            for entry in build_queue(session)[: settings.ai_escalate_top_n]:
+                if (
+                    entry.report.scoring_provider != "local_granite"
+                    and entry.report.id not in candidates
+                ):
+                    candidates.append(entry.report.id)
+
+    if limit is not None:
+        candidates = candidates[:limit]
+
+    rescored = 0
+    for report_id in candidates:
+        if await rescore_with_ai(report_id):
+            rescored += 1
+
+    if candidates:
+        logger.info(
+            "AI re-score sweep complete",
+            extra={"considered": len(candidates), "rescored": rescored},
+        )
+    return rescored
+
+
 async def triage_pending(limit: int | None = None, *, triage_router: TriageRouter | None = None) -> int:
     """Score every report still awaiting a severity score.
 

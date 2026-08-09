@@ -1,0 +1,36 @@
+version: "3.9"
+
+# ── RescueNet AI Engine — Docker Compose ──────────────────────────────────────
+#
+# NOTE: Ollama (and IBM Granite model) must be running on the HOST machine.
+# The ai-engine service connects to host Ollama via host.docker.internal.
+#
+# Quick start:
+#   1. ollama serve                             (in a separate terminal)
+#   2. ollama pull granite3.3:8b
+#   3. docker-compose up --build
+
+services:
+  ai-engine:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      # Point to Ollama on the Docker host
+      OLLAMA_HOST: "http://host.docker.internal:11434"
+      GRANITE_MODEL: "${GRANITE_MODEL:-granite3.3:8b}"
+      GRANITE_MODEL_VERSION: "${GRANITE_MODEL_VERSION:-latest}"
+      AI_TIMEOUT_SECONDS: "${AI_TIMEOUT_SECONDS:-5}"
+      AI_TEMPERATURE: "${AI_TEMPERATURE:-0.0}"
+      SEVERITY_CRITICAL_THRESHOLD: "${SEVERITY_CRITICAL_THRESHOLD:-80}"
+      SEVERITY_HIGH_THRESHOLD: "${SEVERITY_HIGH_THRESHOLD:-60}"
+      SEVERITY_MEDIUM_THRESHOLD: "${SEVERITY_MEDIUM_THRESHOLD:-40}"
+      APP_LOG_LEVEL: "${APP_LOG_LEVEL:-INFO}"
+      APP_ENV: "${APP_ENV:-production}"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/health').raise_for_status()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

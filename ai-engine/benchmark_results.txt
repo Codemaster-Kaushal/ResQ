@@ -1,0 +1,27 @@
+Records: 96
+Mean: 5474.31 ms
+p50: 5035.78 ms
+p95: 6071.39 ms
+Max: 8085.62 ms
+Target: p95 < 5000 ms
+FAIL
+
+==================================================
+DIAGNOSTICS & FALLBACK DEMONSTRATION
+==================================================
+Reason for SLA failure:
+- Local Ollama inference timeout limits are configured to 5 seconds by default.
+- In this execution environment, Ollama queries for granite3.3:8b take longer than 5 seconds to complete.
+- Consequently, Granite classification calls time out after 5.0 seconds and fall back to the rule-based system.
+- The latency for each record is thus dominated by the 5.0s timeout, causing p95 to exceed the 5000 ms target.
+
+Verification of AI Call Density:
+- Checked classification: exactly one Granite NLU call is made per report via provider.classify_incident.
+- Checked severity: severity.py does NOT perform any extra Granite calls; it uses deterministic rule-based calculation.
+- Checked repeated model processing: none, image/vision analysis is executed only once per report if an image is provided.
+
+Demonstration of Fallback Behavior:
+- When Ollama times out (after 5.0s), the system correctly activates rule-based fallback.
+- The report continues processing without throwing unhandled exceptions.
+- The result status is marked as VERIFIED / LIKELY_VALID / NEEDS_REVIEW, and fallback_state is set to AI_BACKFILL_PENDING.
+- This demonstrates the robustness and correctness of the fallback system under high latency or offline conditions.

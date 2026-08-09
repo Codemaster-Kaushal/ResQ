@@ -17,6 +17,7 @@ import { i18n, t, LANGUAGES } from './i18n.js';
 import { account, emergencyProfile, family } from './profile.js';
 import { SIGNALS, composeBody } from './signals.js';
 import { voice } from './voice.js';
+import { preparePhoto } from './photo.js';
 import {
   $, $$, esc, toast, severityBand, severityLabel, titleCase,
   ago, minutesLabel, metres, haversineKm, parseUtc, reasonLabel,
@@ -26,6 +27,7 @@ const state = {
   online: navigator.onLine,
   history: [],
   photo: null,
+  photoExif: null,
   signals: new Set(),
   attachProfile: true,
   attachFamily: true,
@@ -107,7 +109,7 @@ function resetTo(key) {
 function onEnter(key) {
   const enter = {
     home: () => { refreshHome(); setTimeout(() => maps.home?.invalidateSize(), 80); },
-    report: () => setTimeout(() => { ensureReportMap(); maps.report?.invalidateSize(); }, 80),
+    report: () => { /* no map here on purpose — see index.html */ },
     nearby: loadNearby,
     mine: loadMine,
     system: loadSystem,
@@ -185,19 +187,13 @@ window.addEventListener('offline', () => { state.online = false; renderConnectio
 
 // --- Maps ---------------------------------------------------------------
 
-const maps = { home: null, report: null };
-const markers = { home: null, report: null, incidents: [] };
+const maps = { home: null };
+const markers = { home: null, incidents: [] };
 
 function ensureHomeMap() {
   if (maps.home || typeof L === 'undefined') return;
   maps.home = createMap($('#homeMap'), { zoom: 14 });
   markers.home = L.marker([geo.current.lat, geo.current.lng], { icon: userIcon() }).addTo(maps.home);
-}
-
-function ensureReportMap() {
-  if (maps.report || typeof L === 'undefined' || !$('#reportMap')) return;
-  maps.report = createMap($('#reportMap'), { zoom: 16, controls: false });
-  markers.report = L.marker([geo.current.lat, geo.current.lng], { icon: userIcon() }).addTo(maps.report);
 }
 
 /** Public warnings only: a marker and a category, never anyone's words. */
@@ -211,7 +207,6 @@ function paintPublicSafety(zones) {
 
 geo.onChange((pos) => {
   markers.home?.setLatLng([pos.lat, pos.lng]);
-  markers.report?.setLatLng([pos.lat, pos.lng]);
 
   const line = $('#gpsLine');
   if (line) line.textContent = pos.error || `${t('sos.location')}: ±${pos.accuracy} m`;
@@ -653,16 +648,29 @@ function toggleRow(key, label, on) {
   </button>`;
 }
 
-function setPhoto(file) {
+async function setPhoto(file) {
   if (!file) return;
-  state.photo = file;
-  const url = URL.createObjectURL(file);
+
+  // Shrink before upload. On a weak link the radio, not the CPU, is what
+  // drains the battery — and EXIF GPS is read out first because re-encoding
+  // destroys it and the backend uses it as a trust signal.
+  const { file: prepared, exifGps, originalBytes, finalBytes } = await preparePhoto(file);
+  state.photo = prepared;
+  state.photoExif = exifGps;
+
+  const saved = originalBytes > finalBytes
+    ? ` · ${Math.round(originalBytes / 1024)} KB → ${Math.round(finalBytes / 1024)} KB`
+    : '';
+
+  const url = URL.createObjectURL(prepared);
   $('#photoPreview').innerHTML = `<div class="preview">
     <img src="${url}" alt="">
     <button class="preview-drop" id="dropPhoto" aria-label="Remove">×</button>
+    <div class="preview-note">${esc(t('report.photo'))}${saved}${exifGps ? ' · GPS' : ''}</div>
   </div>`;
   $('#dropPhoto').addEventListener('click', () => {
     state.photo = null;
+    state.photoExif = null;
     URL.revokeObjectURL(url);
     $('#photoPreview').innerHTML = '';
   });
@@ -696,6 +704,9 @@ async function submit({ rawText, urgent = false } = {}) {
     clientCreatedAt: new Date().toISOString(),
     pseudonym: identity.pseudonym,
     image: urgent ? null : state.photo,
+    // Re-encoding strips EXIF, so the photo's own GPS travels separately and the
+    // backend's EXIF_CONSISTENT trust signal still has something to check.
+    exifGps: urgent ? null : state.photoExif,
   };
 
   if (!state.online) {
@@ -709,6 +720,7 @@ async function submit({ rawText, urgent = false } = {}) {
       text: entry.text, lat: entry.lat, lng: entry.lng,
       clientCreatedAt: entry.clientCreatedAt, pseudonym: entry.pseudonym,
       idempotencyKey: entry.idempotencyKey, image: entry.image,
+      exifGps: entry.exifGps,
     });
     filedLocally.add({ ...entry, image: undefined, id: created.id });
     return { ...created, code: trackingCode(entry.idempotencyKey) };
@@ -1134,6 +1146,7 @@ function bind() {
     text.value = '';
     $('#reportCount').textContent = '0/4000';
     state.photo = null;
+    state.photoExif = null;
     state.signals.clear();
     $('#photoPreview').innerHTML = '';
     renderSignals();

@@ -151,6 +151,12 @@ async def create_report(
     ] = None,
     reporter_pseudonym: Annotated[str | None, Form(max_length=64)] = None,
     idempotency_key: Annotated[str | None, Form(max_length=128)] = None,
+    # A phone downscales the photo before upload to save radio time and battery,
+    # and re-encoding strips EXIF. These carry the coordinates read from the
+    # original so the EXIF_CONSISTENT trust signal is not silently lost. Used
+    # only when the uploaded file has no EXIF of its own.
+    exif_lat: Annotated[float | None, Form(ge=-90, le=90)] = None,
+    exif_lng: Annotated[float | None, Form(ge=-180, le=180)] = None,
     image: Annotated[UploadFile | None, File(description="Optional photograph")] = None,
     session: Session = Depends(get_session),
 ) -> ReportCreated:
@@ -194,7 +200,11 @@ async def create_report(
 
     stored = None
     if image is not None and image.filename:
-        stored = store_image_bytes(await image.read(), image.content_type)
+        stored = store_image_bytes(
+            await image.read(),
+            image.content_type,
+            fallback_gps=(exif_lat, exif_lng) if exif_lat is not None and exif_lng is not None else None,
+        )
 
     report = Report(
         idempotency_key=key,

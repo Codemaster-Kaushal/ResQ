@@ -43,6 +43,23 @@ class Settings(BaseSettings):
     max_image_bytes: int = Field(default=10 * 1024 * 1024, gt=0)
     allowed_image_types: str = "image/jpeg,image/png,image/webp"
 
+    # --- ResQ AI engine (IBM Granite via Ollama, imported in-process) ---
+    ai_engine_enabled: bool = False
+    ai_engine_path: str = "../ai-engine"
+    # Not 5. Granite 8B takes ~15 s on CPU, so the engine's own default
+    # guarantees a timeout on every single call and the model never runs.
+    ai_engine_timeout_seconds: float = Field(default=20.0, gt=0)
+    ollama_host: str = "http://localhost:11434"
+    granite_model: str = "granite3.3:8b"
+
+    # Two-pass scoring: the deterministic scorer always runs first so a report
+    # is ranked and dispatchable in milliseconds; Granite re-scores afterwards,
+    # and only where it can change the outcome.
+    ai_escalate_on_other: bool = True
+    ai_escalate_near_band: bool = True
+    ai_escalate_band_margin: int = Field(default=5, ge=0, le=50)
+    ai_escalate_top_n: int = Field(default=10, ge=0)
+
     # --- AI providers (Phase 4) ---
     ai_provider_order: str = "gemini,groq,local"
     gemini_api_key: str | None = None
@@ -125,6 +142,12 @@ class Settings(BaseSettings):
     @property
     def media_dir(self) -> Path:
         path = Path(self.media_storage_path)
+        return path if path.is_absolute() else (BACKEND_ROOT / path).resolve()
+
+    @property
+    def ai_engine_root(self) -> Path:
+        """Absolute path to the sibling AI engine, resolved from the backend dir."""
+        path = Path(self.ai_engine_path)
         return path if path.is_absolute() else (BACKEND_ROOT / path).resolve()
 
     @property

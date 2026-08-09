@@ -1,0 +1,110 @@
+[
+  {
+    "report_id": "RPT-001",
+    "description": "Floodwater has entered the ground floor and trapped six residents with injuries waiting for rescue.",
+    "latitude": 12.9716,
+    "longitude": 77.5946,
+    "client_timestamp": "2026-08-09T10:00:00Z",
+    "reporter_pseudonym": "USER-REAL-001",
+    "image_path": "flood_genuine.png"
+  },
+  {
+    "report_id": "RPT-002",
+    "description": "A building has partially collapsed and debris is blocking the street after a structural failure.",
+    "latitude": 12.9728,
+    "longitude": 77.5952,
+    "client_timestamp": "2026-08-09T10:02:00Z",
+    "reporter_pseudonym": "USER-STRUCT-002",
+    "image_path": "collapse.png"
+  },
+  {
+    "report_id": "RPT-003",
+    "description": "Road surface and water pipes are damaged after a storm and traffic is disrupted.",
+    "latitude": 12.9735,
+    "longitude": 77.5964,
+    "client_timestamp": "2026-08-09T10:04:00Z",
+    "reporter_pseudonym": "USER-INFRA-003",
+    "image_path": "infrastructure.png"
+  },
+  {
+    "report_id": "RPT-004",
+    "description": "Minor waterlogging in the residential area is causing temporary blockage but no major damage.",
+    "latitude": 12.9742,
+    "longitude": 77.5972,
+    "client_timestamp": "2026-08-09T10:06:00Z",
+    "reporter_pseudonym": "USER-WATER-004",
+    "image_path": "waterlogging.png"
+  },
+  {
+    "report_id": "RPT-005",
+    "description": "Duplicate flood report reusing the same image from RPT-001 for authenticity testing.",
+    "latitude": 12.9716,
+    "longitude": 77.5946,
+    "client_timestamp": "2026-08-09T10:08:00Z",
+    "reporter_pseudonym": "USER-DUP-005",
+    "image_path": "flood_genuine.png"
+  },
+  {
+    "report_id": "RPT-006",
+    "description": "Coordinate validation test: latitude is outside the valid range and should be rejected.",
+    "latitude": 500,
+    "longitude": 77.5946,
+    "client_timestamp": "2026-08-09T10:10:00Z",
+    "reporter_pseudonym": "USER-GEO-006",
+    "image_path": null
+  },
+  {
+    "report_id": "RPT-007",
+    "description": "Timestamp plausibility test with a large client/server mismatch for validation.",
+    "latitude": 12.9750,
+    "longitude": 77.5980,
+    "client_timestamp": "2038-01-01T00:00:00Z",
+    "reporter_pseudonym": "USER-IMP-008",
+    "image_path": null
+  },
+  {
+    "report_id": "RPT-008",
+    "description": "Same reporter pseudonym as RPT-007 but far away in a short time gap to trigger impossible movement.",
+    "latitude": 18.5204,
+    "longitude": 73.8567,
+    "client_timestamp": "2026-08-09T10:15:00Z",
+    "reporter_pseudonym": "USER-IMP-008",
+    "image_path": null
+  },
+  {
+    "report_id": "RPT-009",
+    "description": "Flooding corroboration test report 1 near the same riverline as the next reports.",
+    "latitude": 12.9718,
+    "longitude": 77.5950,
+    "client_timestamp": "2026-08-09T10:20:00Z",
+    "reporter_pseudonym": "USER-CORR-009",
+    "image_path": null
+  },
+  {
+    "report_id": "RPT-010",
+    "description": "Flooding corroboration test report 2 within a few minutes and short distance from report 009.",
+    "latitude": 12.9723,
+    "longitude": 77.5955,
+    "client_timestamp": "2026-08-09T10:22:00Z",
+    "reporter_pseudonym": "USER-CORR-010",
+    "image_path": null
+  },
+  {
+    "report_id": "RPT-011",
+    "description": "Flooding corroboration test report 3 completing the triplet of same-type nearby reports.",
+    "latitude": 12.9727,
+    "longitude": 77.5960,
+    "client_timestamp": "2026-08-09T10:24:00Z",
+    "reporter_pseudonym": "USER-CORR-011",
+    "image_path": null
+  },
+  {
+    "report_id": "RPT-012",
+    "description": "Text-only report with no image to confirm successful analysis without image input.",
+    "latitude": 12.9760,
+    "longitude": 77.5987,
+    "client_timestamp": "2026-08-09T10:26:00Z",
+    "reporter_pseudonym": "USER-TEXT-012",
+    "image_path": null
+  }
+]

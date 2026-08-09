@@ -45,11 +45,22 @@ const ROLES = {
   admin: { label: 'Administrator', scope: 'Everything, including the audit log' },
 };
 
+const DEFAULT_ROLE = 'officer';
+
 const operator = {
   get name() { return localStorage.getItem('resq.operator') || ''; },
   set name(v) { localStorage.setItem('resq.operator', v); },
-  get role() { return localStorage.getItem('resq.role') || 'officer'; },
-  set role(v) { localStorage.setItem('resq.role', v); },
+  /* Falls back to the least-privileged role rather than trusting the stored
+   * value. localStorage outlives a deployment, so a role we have since renamed
+   * would otherwise reach `ROLES[role].label` as undefined and take the whole
+   * control room down — a blank screen for the operator, during an incident.
+   * Degrading to Control Officer is both safe and recoverable: they can pick
+   * their role again from the sign-in screen. */
+  get role() {
+    const stored = localStorage.getItem('resq.role');
+    return stored && stored in ROLES ? stored : DEFAULT_ROLE;
+  },
+  set role(v) { localStorage.setItem('resq.role', v in ROLES ? v : DEFAULT_ROLE); },
   get signedIn() { return Boolean(this.name); },
   signOut() {
     localStorage.removeItem('resq.operator');
@@ -649,14 +660,20 @@ function aiPanel(report) {
 
 function reasonTable(title, reasons) {
   if (!reasons || !reasons.length) return '';
-  const total = reasons.reduce((sum, r) => sum + r.weight, 0);
+  // The rule scorer emits additive weights that sum to the score; Granite emits
+  // bare codes. Showing a "total" for the latter would invent a number, so the
+  // row only appears when every reason actually carries a weight.
+  const weighted = reasons.every((r) => typeof r.weight === 'number');
+  const total = weighted ? reasons.reduce((sum, r) => sum + r.weight, 0) : null;
   return `<div class="section-title">${title} — why</div>
     <div class="table-wrap"><table class="table"><tbody>
       ${reasons.map((r) => `<tr>
         <td><b>${esc(r.code)}</b><div class="tiny dim">${esc(reasonLabel(r.code))} · ${esc(r.source)}</div></td>
-        <td class="num" style="color:${r.weight >= 0 ? 'var(--accent-green)' : 'var(--danger)'}"><b>${r.weight >= 0 ? '+' : ''}${r.weight}</b></td>
+        <td class="num" style="color:${r.weight == null ? 'var(--text-dim)' : r.weight >= 0 ? 'var(--accent-green)' : 'var(--danger)'}"><b>${r.weight == null ? '—' : (r.weight >= 0 ? '+' : '') + r.weight}</b></td>
       </tr>`).join('')}
-      <tr><td><b>Total</b></td><td class="num"><b>${total}</b></td></tr>
+      ${weighted
+        ? `<tr><td><b>Total</b></td><td class="num"><b>${total}</b></td></tr>`
+        : `<tr><td colspan="2" class="tiny dim">Scored by the model — reason codes are not additive, so there is no total to show.</td></tr>`}
     </tbody></table></div>`;
 }
 

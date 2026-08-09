@@ -210,8 +210,18 @@ def _target_path(extension: str, now: datetime) -> tuple[Path, str]:
     return absolute, relative
 
 
-def store_image_bytes(data: bytes, declared_type: str | None = None) -> StoredImage:
-    """Validate, persist, hash, and read the metadata of one uploaded image."""
+def store_image_bytes(
+    data: bytes,
+    declared_type: str | None = None,
+    fallback_gps: tuple[float, float] | None = None,
+) -> StoredImage:
+    """Validate, persist, hash, and read the metadata of one uploaded image.
+
+    ``fallback_gps`` is used only when the file carries no EXIF of its own — a
+    client that downscaled the photo can hand back the coordinates it read from
+    the original, which would otherwise be destroyed by re-encoding. Embedded
+    EXIF always wins: it is evidence, the parameter is a claim.
+    """
     if not data:
         raise InvalidImage("The uploaded image is empty")
 
@@ -235,11 +245,20 @@ def store_image_bytes(data: bytes, declared_type: str | None = None) -> StoredIm
     # would shift the perceptual hash away from what the reporter actually sent.
     absolute.write_bytes(data)
 
+    exif = read_exif_from_path(absolute)
+    if not exif.has_gps and fallback_gps is not None:
+        exif = ExifSnapshot(
+            captured_at=exif.captured_at,
+            lat=fallback_gps[0],
+            lng=fallback_gps[1],
+            camera=exif.camera,
+        )
+
     stored = StoredImage(
         relative_path=relative,
         phash=compute_phash(absolute),
         byte_size=len(data),
-        exif=read_exif_from_path(absolute),
+        exif=exif,
     )
 
     logger.info(

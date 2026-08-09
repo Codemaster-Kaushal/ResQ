@@ -208,6 +208,52 @@ def exif_distance_km(report: Report) -> float | None:
     return haversine_km(report.lat, report.lng, snapshot.lat, snapshot.lng)  # type: ignore[arg-type]
 
 
+def compute_authenticity_via_engine(session: Session, report: Report) -> Authenticity | None:
+    """Delegate the trust score to the AI engine, fed from our own database.
+
+    The engine's trust stage is deterministic and uses no LLM, so unlike
+    severity it costs nothing and can run inline on every report.
+
+    What it must *not* use is its own `state.json`: that file only knows the
+    reports that passed through the engine, so it would miss the seeded
+    duplicate pair and find no corroboration. `calculate_authenticity()` takes
+    prior reports and known hashes as arguments, so it gets the real table
+    instead and the database stays the single source of truth.
+
+    Returns None when the engine is unavailable, so the caller falls back to
+    the backend's own §4.2 implementation.
+    """
+    if not settings.ai_engine_enabled:
+        return None
+
+    from app.ai.resq_engine import engine_provider
+    from app.services import ai_state
+
+    if not engine_provider.is_available():
+        return None
+
+    try:
+        verdict = engine_provider.assess(
+            report_id=str(report.id),
+            pseudonym=report.reporter_pseudonym,
+            lat=report.lat,
+            lng=report.lng,
+            client_timestamp=report.client_created_at,
+            image_bytes=ai_state.image_bytes_for(report),
+            previous_reports=ai_state.previous_reports_for(session, report),
+            known_hashes=ai_state.known_hashes_for(session, report),
+        )
+    except Exception:
+        logger.exception(
+            "AI authenticity failed; falling back to the built-in trust engine",
+            extra={"report_id": str(report.id)},
+        )
+        return None
+
+    reasons = [*verdict.reasons, reason(f"BAND_{verdict.band}", 0, "local_granite")]
+    return Authenticity(score=verdict.score, reasons=reasons)
+
+
 def compute_authenticity(session: Session, report: Report) -> Authenticity:
     """Apply TRD §4.2 to one report. Read-only: it decides nothing on its own."""
     reasons: list[dict[str, Any]] = [
@@ -302,7 +348,11 @@ async def assess_report(report_id: uuid.UUID, *, force: bool = False) -> Authent
             if report.authenticity_score is not None and not force:
                 return None
 
-            assessment = compute_authenticity(session, report)
+            assessment = compute_authenticity_via_engine(session, report)
+            scored_by = "local_granite"
+            if assessment is None:
+                assessment = compute_authenticity(session, report)
+                scored_by = "local"
             status = apply_authenticity(report, assessment)
 
             session.add(report)
@@ -314,6 +364,7 @@ async def assess_report(report_id: uuid.UUID, *, force: bool = False) -> Authent
                     "authenticity_score": assessment.score,
                     "reason_codes": assessment.reason_codes,
                     "threshold": settings.authenticity_flag_threshold,
+                    "scored_by": scored_by,
                 },
             )
             # The routing decision is its own event: it is what a human acts on, and

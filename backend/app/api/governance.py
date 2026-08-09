@@ -32,12 +32,14 @@ router = APIRouter(prefix="/api/governance", tags=["governance"])
 PROVIDER_CAPABILITIES: dict[str, list[str]] = {
     "gemini": ["text", "vision"],
     "groq": ["text"],
+    "local_granite": ["text"],  # vision is wired but not enabled
     LOCAL_PROVIDER_NAME: ["text"],
 }
 
 PROVIDER_KINDS: dict[str, str] = {
     "gemini": "remote language model",
     "groq": "remote language model",
+    "local_granite": "on-premise language model (IBM Granite via Ollama)",
     LOCAL_PROVIDER_NAME: "deterministic rule-based scorer",
 }
 
@@ -92,10 +94,27 @@ class GovernanceReport(BaseModel):
     data: DataSnapshot
 
 
-def _provider_statuses(usage: Counter) -> list[ProviderStatus]:
+async def _provider_statuses(usage: Counter) -> list[ProviderStatus]:
+    from app.ai.resq_engine import engine_provider
+
     availability = triage_router.available_providers()
-    models = {"gemini": settings.gemini_model, "groq": settings.groq_model}
+    models = {
+        "gemini": settings.gemini_model,
+        "groq": settings.groq_model,
+        "local_granite": settings.granite_model,
+    }
     credentials = settings.configured_providers()
+
+    names = list(settings.provider_order)
+    if settings.ai_engine_enabled or usage.get("local_granite"):
+        names.insert(0, "local_granite")
+        credentials["local_granite"] = bool(settings.ai_engine_enabled)
+        # The router's cheap check only asks "is it configured and importable?",
+        # which stays true after Ollama dies. This endpoint exists to be honest
+        # about what is really running, so it pays for a real round trip.
+        availability["local_granite"] = (
+            engine_provider.is_available() and await engine_provider.ollama_reachable()
+        )
 
     return [
         ProviderStatus(
@@ -107,13 +126,22 @@ def _provider_statuses(usage: Counter) -> list[ProviderStatus]:
             available=availability.get(name, False),
             reports_scored=usage.get(name, 0),
         )
-        for name in settings.provider_order
+        for name in names
     ]
 
 
 def _summarise(usage: Counter, providers: list[ProviderStatus]) -> tuple[str, str, str, bool]:
     """Return (active_provider, fallback_state, honest_summary, running_on_fallback)."""
-    remote_ready = [p.name for p in providers if p.name != LOCAL_PROVIDER_NAME and p.available]
+    # Granite runs on our own hardware, so it is neither the rule-based floor nor
+    # a remote provider. Lumping it in with the remote ones made the summary
+    # claim "remote providers are configured" on an installation that has no
+    # network dependency at all.
+    remote_ready = [
+        p.name
+        for p in providers
+        if p.name not in (LOCAL_PROVIDER_NAME, "local_granite") and p.available
+    ]
+    granite = next((p for p in providers if p.name == "local_granite"), None)
 
     if usage:
         active = usage.most_common(1)[0][0]
@@ -123,13 +151,44 @@ def _summarise(usage: Counter, providers: list[ProviderStatus]) -> tuple[str, st
     on_fallback = active == LOCAL_PROVIDER_NAME
     scored_total = sum(usage.values())
 
-    if not remote_ready:
-        fallback_state = "no remote provider credentials configured"
+    granite_scored = usage.get("local_granite", 0)
+
+    if granite_scored:
+        fallback_state = "on-premise language model in use"
         summary = (
-            "All scoring is performed by the local deterministic rule-based scorer. "
-            "No remote model credentials are configured, so no report has been scored "
-            "by a language model. Image content is not analysed: the visual severity "
-            "modifier is always zero."
+            f"{granite_scored} of {scored_total} reports were scored by IBM Granite "
+            f"({settings.granite_model}) running on-premise via Ollama; the rest by the "
+            "local deterministic rule-based scorer. Every report is scored by the rules "
+            "first so it can be queued immediately, and the model re-scores only where "
+            "it could change the outcome. Image content is not analysed: the visual "
+            "severity modifier is always zero."
+        )
+    elif not remote_ready:
+        granite_up = bool(granite and granite.available)
+        if settings.ai_engine_enabled and granite_up:
+            fallback_state = "on-premise model reachable; no report has needed it yet"
+            granite_note = (
+                f" IBM Granite ({settings.granite_model}) is running on-premise and "
+                "reachable, but no report has needed re-scoring yet: the rules were "
+                "confident on every report so far, so the model was never consulted."
+            )
+        elif settings.ai_engine_enabled:
+            fallback_state = "on-premise model enabled but unreachable"
+            granite_note = (
+                f" IBM Granite ({settings.granite_model}) is enabled but not answering — "
+                "check that Ollama is running and the model is pulled. Scoring has "
+                "continued on the rules, so no report was lost."
+            )
+        else:
+            fallback_state = "no remote provider credentials configured"
+            granite_note = (
+                " No remote model credentials are configured, so no report has been "
+                "scored by a language model."
+            )
+        summary = (
+            "All scoring is performed by the local deterministic rule-based scorer."
+            + granite_note
+            + " Image content is not analysed: the visual severity modifier is always zero."
         )
     elif on_fallback and scored_total:
         fallback_state = "remote providers configured but the local scorer is answering"
@@ -154,13 +213,13 @@ def _summarise(usage: Counter, providers: list[ProviderStatus]) -> tuple[str, st
     response_model=GovernanceReport,
     summary="Model provenance, thresholds, and the human-in-the-loop record",
 )
-def governance(session: Session = Depends(get_session)) -> GovernanceReport:
+async def governance(session: Session = Depends(get_session)) -> GovernanceReport:
     """What is really running (FR-29), and what humans have really decided (FR-30)."""
     reports = session.exec(select(Report)).all()
     events = session.exec(select(ProcessEvent)).all()
 
     usage = Counter(r.scoring_provider for r in reports if r.scoring_provider)
-    providers = _provider_statuses(usage)
+    providers = await _provider_statuses(usage)
     active, fallback_state, summary, on_fallback = _summarise(usage, providers)
 
     # Only events a person actually caused. REPORT_VERIFIED is emitted both by

@@ -110,7 +110,7 @@ export const api = {
   // --- Reports --------------------------------------------------------
 
   /** Submit one report. `image` is an optional File or Blob. */
-  createReport({ text, lat, lng, clientCreatedAt, pseudonym, idempotencyKey, image }) {
+  createReport({ text, lat, lng, clientCreatedAt, pseudonym, idempotencyKey, image, exifGps }) {
     const form = new FormData();
     form.append('text', text);
     form.append('lat', lat);
@@ -119,6 +119,13 @@ export const api = {
     if (pseudonym) form.append('reporter_pseudonym', pseudonym);
     if (idempotencyKey) form.append('idempotency_key', idempotencyKey);
     if (image) form.append('image', image, image.name || 'photo.jpg');
+    // Downscaling on the device strips EXIF, so the coordinates read from the
+    // original travel as fields. The backend prefers embedded EXIF and uses
+    // these only when the image carries none.
+    if (exifGps) {
+      form.append('exif_lat', exifGps.lat);
+      form.append('exif_lng', exifGps.lng);
+    }
     // No Content-Type header: the browser must set the multipart boundary.
     return this.request('/api/reports', { method: 'POST', body: form, timeout: 30000 });
   },
