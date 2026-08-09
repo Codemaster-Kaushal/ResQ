@@ -789,3 +789,4 @@ note on this machine's ROS environment below.
 - No new dependencies after Phase 9. *(The AI engine integration held to this: the code paths it
   loads need only `httpx` and `pydantic`, both already pinned.)*
 - Commit at every passing acceptance criterion.
+# ResQ
