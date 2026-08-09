@@ -111,5 +111,26 @@ def configure_logging(level: str = "INFO", fmt: str = "json") -> None:
     logging.getLogger("uvicorn.access").disabled = True
 
 
-def get_logger(name: str) -> logging.Logger:
-    return logging.getLogger(name)
+class SafeLogger(logging.LoggerAdapter):
+    """A logger whose ``extra=`` can never take a request down.
+
+    ``logging`` *raises* when an extra key collides with a built-in LogRecord attribute
+    — ``extra={"created": 3}`` is a KeyError, not a shadowed field. That turns a
+    logging statement into a 500, and only at a log level where the call actually runs,
+    so it can sail through a test suite that runs quieter than production does.
+    Colliding keys are renamed rather than dropped: observability should degrade, not
+    disappear, and never at the cost of the response.
+    """
+
+    def process(self, msg: str, kwargs: dict) -> tuple[str, dict]:
+        extra = kwargs.get("extra")
+        if extra:
+            kwargs["extra"] = {
+                (f"extra_{key}" if key in _STANDARD_ATTRS else key): value
+                for key, value in extra.items()
+            }
+        return msg, kwargs
+
+
+def get_logger(name: str) -> SafeLogger:
+    return SafeLogger(logging.getLogger(name), {})

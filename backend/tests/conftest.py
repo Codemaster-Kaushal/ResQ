@@ -19,7 +19,10 @@ _TMPDIR = Path(tempfile.mkdtemp(prefix="rescuenet-tests-"))
 os.environ["DATABASE_URL"] = f"sqlite:///{_TMPDIR / 'test.db'}"
 os.environ["MEDIA_STORAGE_PATH"] = str(_TMPDIR / "media")
 os.environ["ENABLE_DEBUG_ROUTES"] = "true"
-os.environ["LOG_LEVEL"] = "WARNING"
+# INFO, not WARNING: a logging statement that only runs at INFO can raise (a reserved
+# `extra` key is a KeyError, not a shadowed field), and a quiet test suite would let
+# that reach production as a 500. pytest captures the output, so it costs nothing.
+os.environ["LOG_LEVEL"] = "INFO"
 
 from fastapi.testclient import TestClient  # noqa: E402
 

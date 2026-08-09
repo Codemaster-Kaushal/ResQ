@@ -1,0 +1,39 @@
+# Render blueprint. Deploy with: New → Blueprint → point at this repository.
+#
+# The free tier sleeps after inactivity and has an ephemeral filesystem, so uploaded
+# images do not survive a restart. Attach object storage before relying on them.
+services:
+  - type: web
+    name: rescuenet-backend
+    runtime: python
+    plan: free
+    region: singapore # closest to Bengaluru
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    # Render injects $PORT.
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11"
+      - key: ENVIRONMENT
+        value: production
+      - key: LOG_FORMAT
+        value: json
+      # Off in production: these routes raise exceptions on purpose.
+      - key: ENABLE_DEBUG_ROUTES
+        value: "false"
+      # Restrict once the PWA has a hostname.
+      - key: CORS_ORIGINS
+        value: "*"
+      # SQLite on Render's ephemeral disk is wiped on every deploy. Point this at a
+      # Supabase connection string to keep the data; `postgresql://` is rewritten to
+      # the psycopg 3 dialect automatically.
+      - key: DATABASE_URL
+        value: sqlite:///./rescuenet.db
+      # Optional. Without them the local deterministic scorer answers everything, which
+      # is a supported configuration rather than a degraded one.
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import time
 from typing import Any
 
 from fastapi import APIRouter
@@ -10,11 +9,10 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from app.config import settings
+from app.core.runtime import uptime_seconds
 from app.db import check_database
 
 router = APIRouter(tags=["system"])
-
-_STARTED_AT = time.monotonic()
 
 
 class DatabaseHealth(BaseModel):
@@ -48,7 +46,7 @@ def health() -> Any:
         service=settings.app_name,
         version=settings.app_version,
         environment=settings.environment,
-        uptime_seconds=round(time.monotonic() - _STARTED_AT, 3),
+        uptime_seconds=uptime_seconds(),
         database=DatabaseHealth(**db),
     )
 

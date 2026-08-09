@@ -82,6 +82,9 @@ class Settings(BaseSettings):
     # --- Process mining (Phase 9) ---
     bottleneck_deviation_ratio: float = Field(default=1.5, gt=0)
 
+    # --- Offline sync (Phase 10) ---
+    sync_max_batch_size: int = Field(default=200, ge=1, le=5000)
+
     @field_validator("log_format")
     @classmethod
     def _validate_log_format(cls, value: str) -> str:

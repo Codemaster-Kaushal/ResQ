@@ -57,8 +57,8 @@ cp .env.example .env
 
 ## Phase status
 
-The build runs in ten sequential phases (TRD §7). A phase starts only once the previous phase's
-acceptance criteria pass.
+All ten phases are complete (TRD §7). Each was verified against its own acceptance criteria
+before the next began.
 
 | Phase | Outcome | Status |
 |---|---|---|
@@ -71,9 +71,9 @@ acceptance criteria pass.
 | 7 | Dispatch and assignment engine | ✅ Done |
 | 8 | Responder status lifecycle | ✅ Done |
 | 9 | Process event log, cycle-time mining, CSV export | ✅ Done |
-| 10 | Offline batch sync, governance endpoint, hardening, deploy | ⬜ Next |
+| 10 | Offline batch sync, governance endpoint, hardening, deploy | ✅ Done |
 
-### Endpoints available today
+### The API
 
 | Method | Path | Purpose |
 |---|---|---|
@@ -92,6 +92,8 @@ acceptance criteria pass.
 | GET | `/api/events` | The append-only process event log |
 | GET | `/api/events/export.csv` | Process-mining CSV export |
 | GET | `/api/mining/bottlenecks` | Cycle times and flagged stages |
+| POST | `/api/sync/reports` | Batch sync of offline-queued reports; idempotent |
+| GET | `/api/governance` | Active provider, thresholds, human-in-the-loop record |
 | GET | `/api/_debug/*` | Deliberate-failure routes (debug routes only) |
 
 `/api/_debug/*` is mounted only when `ENABLE_DEBUG_ROUTES=true`. Set it to `false` in production.
@@ -541,6 +543,76 @@ backend/
 
 ---
 
+## Offline sync
+
+A phone with no signal queues reports locally and posts the lot when it reconnects:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/sync/reports -H 'Content-Type: application/json' -d '{
+  "device_id": "field-phone-12",
+  "reports": [
+    {"idempotency_key":"offline-1","text":"Landslide has blocked the ghat road, two vehicles trapped",
+     "lat":13.0362,"lng":77.5985,"client_created_at":"2026-08-09T00:10:00+05:30"}
+  ]
+}'
+```
+
+Three properties make that safe:
+
+- **Idempotent.** Dedup is by the client's own key, shared with the single-report endpoint, so a
+  sync that timed out halfway is simply retried. The same batch twice creates nothing the second
+  time.
+- **Partial success.** One malformed report does not cost the other nineteen — each item gets its
+  own outcome, and only the bad one is rejected. Coordinates are checked per item rather than by
+  the body schema precisely so a single corrupt GPS fix cannot fail the batch.
+- **The wait survives.** A report filed six hours ago arrives with six hours of ageing already
+  accrued, and it *counts* — on the seeded dataset a synced report lands at queue position 3, not
+  at the back:
+
+```
+#3   offline-2   severity 64  waited 360 min  ageing +100.0  priority 68.8
+```
+
+Images are not part of a batch; they use the single multipart endpoint.
+
+---
+
+## Governance — what this system is actually doing
+
+TRD §9 names over-claiming in the pitch as a project risk. `GET /api/governance` is the mitigation:
+it reports the provider that **really scored the reports**, read back out of the data rather than
+from configuration, and says so in a sentence meant to be read aloud:
+
+```
+active provider : local   (running_on_fallback=True)
+fallback state  : no remote provider credentials configured
+
+provider   kind                             creds  avail  scored
+gemini     remote language model            False  False       0
+groq       remote language model            False  False       0
+local      deterministic rule-based scorer  True   True       43
+
+"All scoring is performed by the local deterministic rule-based scorer. No remote
+ model credentials are configured, so no report has been scored by a language model.
+ Image content is not analysed: the visual severity modifier is always zero."
+```
+
+It volunteers the limitation nobody would think to ask about. Add a Gemini key and the same
+endpoint will say the remote calls are *failing* if they are, rather than letting a configured key
+imply a model ran.
+
+It also evidences the two claims that are easiest to assert and hardest to prove:
+
+- **Human-in-the-loop** (FR-30) — overrides, reviews and assignment rejections, counted from the
+  event log by operator. The total is the sum of those named categories, not of every
+  operator-tagged event: a routine dispatch is a person pressing a button, but folding it in would
+  overstate the claim.
+- **Nothing auto-rejected** (FR-15) — `auto_rejected_reports` counts reports in `rejected` with no
+  human review event behind them. It must always be `0`, and there is a test that fakes exactly
+  that condition to prove the check has teeth.
+
+---
+
 ## Deploying with Postgres
 
 SQLite is the local default and stays that way — NFR-2 requires the API to run with **no network at
@@ -564,9 +636,25 @@ naive-UTC convention, and no SQLite-only SQL is used anywhere.
 and compiles every live query against the Postgres dialect **offline**, so a portability break is
 caught by the test suite rather than on deploy day.
 
-Two things still to do at Phase 10: uploaded images need object storage (they live on the same
-ephemeral disk), and Supabase's pooler on port 6543 needs `prepare_threshold=0` — the direct
-connection on 5432 is simpler for a long-lived server.
+### Deploying
+
+[`render.yaml`](render.yaml) is a Render blueprint (New → Blueprint → point it at this repo);
+[`backend/Dockerfile`](backend/Dockerfile) runs anywhere else. Both honour the platform's `$PORT`,
+and the blueprint sets `ENABLE_DEBUG_ROUTES=false` — those routes raise on purpose.
+
+Smoke-test whatever you deploy:
+
+```bash
+./backend/scripts/deploy-check.sh https://your-instance.onrender.com
+```
+
+It probes eleven endpoints, exits non-zero on the first failure, and prints the governance
+summary so you can see at a glance which scorer the deployed instance is really using.
+
+**Two caveats worth knowing before demo day.** Uploaded images live on the same ephemeral disk as
+SQLite, so they need object storage to survive a redeploy. And Supabase's pooler on port 6543 wants
+`prepare_threshold=0` with psycopg 3 — the direct connection on 5432 is simpler for a long-lived
+server.
 
 ---
 
@@ -579,6 +667,27 @@ If you have a ROS/cognipilot environment sourced, its `PYTHONPATH` entries are s
 this project's virtualenv, and `pytest` will try to load ROS's `launch_testing` plugin and fail on
 an unrelated missing dependency. `scripts/dev.sh` and `scripts/test.sh` both `unset PYTHONPATH` for
 their own process, so use those. Nothing about your ROS setup is modified.
+
+---
+
+## Verification
+
+Every phase was checked against its own acceptance criteria before the next one started, and the
+whole suite is re-run on each change.
+
+```
+509 tests                    passing
+509 tests, network disabled  passing   (NFR-2)
+34 seed self-checks          passing
+```
+
+The seed is self-verifying: after writing the dataset it re-measures its own fixtures — the
+duplicate pair's pHash distance, the corroboration radius and window, the stale gap, that the
+newest critical report really does rank first — and exits non-zero if any of them stopped holding.
+A seed that has quietly stopped exercising a phase is worse than no seed.
+
+`scripts/test.sh`, `scripts/seed.sh` and `scripts/dev.sh` all `unset PYTHONPATH` first; see the
+note on this machine's ROS environment below.
 
 ---
 

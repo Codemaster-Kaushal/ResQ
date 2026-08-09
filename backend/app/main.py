@@ -19,11 +19,13 @@ from app.api import (
     debug,
     dispatch,
     events,
+    governance,
     health,
     mining,
     queue,
     reports,
     responders,
+    sync,
 )
 from app.config import settings
 from app.core.errors import DEFAULT_ERROR_RESPONSES, register_exception_handlers
@@ -135,6 +137,8 @@ def create_app() -> FastAPI:
     app.include_router(responders.router)
     app.include_router(events.router)
     app.include_router(mining.router)
+    app.include_router(sync.router)
+    app.include_router(governance.router)
     if settings.enable_debug_routes:
         app.include_router(debug.router)
 
