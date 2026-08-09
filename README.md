@@ -10,25 +10,34 @@ process event so response bottlenecks are measurable rather than anecdotal.
 **Team:** CtrlWin — Lakshya Arora, Taashu Sharma, Kaushal Choudhary
 **Event:** Hackverse 2.0, MIT Bengaluru
 
-Specs: [PRD](PRD-RescueNet-Backend.md) · [TRD](TRD-RescueNet-Backend.md)
+Specs: [PRD](PRD-RescueNet-Backend.md) · [TRD](TRD-RescueNet-Backend.md) · Frontend: [frontend/README.md](frontend/README.md)
+
+| Part | State |
+|---|---|
+| **Backend** — 16 endpoints, 509 tests, all ten TRD phases | Complete |
+| **Frontend** — citizen PWA + control room, wired to every endpoint | Complete |
+| **AI intelligence layer** — remote provider integration | Pending (Person 2); the local scorer runs in its place today |
 
 ---
 
 ## Quickstart
 
+Two terminals — backend, then frontend:
+
 ```bash
-cd backend
-./scripts/dev.sh
+cd backend  && ./scripts/dev.sh     # API   on http://127.0.0.1:8000
+cd frontend && ./serve.sh           # apps  on http://127.0.0.1:5173
 ```
 
-That creates the virtualenv, installs dependencies, copies `.env.example` to `.env` if needed, and
-starts the API on <http://127.0.0.1:8000>.
+`dev.sh` creates the virtualenv, installs dependencies, copies `.env.example` to `.env` if needed,
+and starts the API.
 
 | URL | What |
 |---|---|
+| <http://127.0.0.1:5173/index.html> | **Citizen app** — report an emergency |
+| <http://127.0.0.1:5173/control.html> | **Control room** — queue, dispatch, review, bottlenecks |
 | <http://127.0.0.1:8000/docs> | Interactive OpenAPI docs |
 | <http://127.0.0.1:8000/health> | Liveness + database status |
-| <http://127.0.0.1:8000/> | Service metadata |
 
 Load the demo dataset (safe to re-run — it inserts only what is missing):
 
@@ -510,6 +519,7 @@ about three seconds, every one with `scoring_provider: "local"`.
 ## Layout
 
 ```
+frontend/               Citizen PWA + control room — see frontend/README.md
 backend/
 ├─ app/
 │  ├─ main.py        App factory, request middleware, lifespan

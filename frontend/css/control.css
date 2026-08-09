@@ -1,0 +1,243 @@
+/* Control room. Designed for a tablet or laptop in an operations room, but it
+   collapses to a single column so it is still usable on a phone in the field. */
+
+body.control {
+  display: block;
+  background: #12100e;
+  min-height: 100dvh;
+  padding: 0;
+}
+
+.ctl-head {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding: calc(var(--safe-top) + 12px) 16px 12px;
+  background: rgba(18, 16, 14, 0.96);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--border-soft);
+}
+.ctl-brand { display: flex; align-items: center; gap: 11px; }
+.ctl-logo {
+  width: 38px; height: 38px;
+  border-radius: 11px;
+  background: rgba(245, 166, 35, 0.14);
+  display: grid;
+  place-items: center;
+}
+.ctl-head h1 { font-size: 18px; font-weight: 800; letter-spacing: -0.2px; }
+.ctl-head-actions { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+
+.operator-field {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-sm);
+  padding: 4px 10px;
+}
+.operator-field input {
+  background: none;
+  border: none;
+  outline: none;
+  font-size: 13.5px;
+  font-weight: 600;
+  width: 130px;
+}
+
+.ctl-tabs {
+  position: sticky;
+  top: 0;
+  z-index: 15;
+  display: flex;
+  gap: 6px;
+  padding: 10px 16px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  background: #12100e;
+  border-bottom: 1px solid var(--border-soft);
+}
+.ctl-tabs::-webkit-scrollbar { display: none; }
+.ctl-tabs button {
+  min-height: 38px;
+  padding: 8px 15px;
+  border-radius: var(--r-pill);
+  background: var(--bg-card);
+  border: 1px solid var(--border-soft);
+  color: var(--text-secondary);
+  font-size: 13.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.ctl-tabs button.is-active {
+  background: var(--accent-gold);
+  border-color: var(--accent-gold);
+  color: #2a1c0a;
+}
+.ctl-tabs .count {
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: var(--r-pill);
+  padding: 1px 7px;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.ctl-main {
+  padding: 18px 16px 60px;
+  max-width: 1180px;
+  margin: 0 auto;
+  height: calc(100dvh - 118px);
+}
+
+.ctl-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+}
+
+.metric {
+  background: var(--bg-card);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-md);
+  padding: 15px;
+}
+.metric b { display: block; font-size: 27px; font-weight: 800; line-height: 1.1; }
+.metric span { display: block; font-size: 11.5px; color: var(--text-secondary); font-weight: 700; letter-spacing: 0.6px; margin-top: 4px; }
+.metric small { display: block; font-size: 12px; color: var(--text-dim); margin-top: 6px; line-height: 1.4; }
+
+.ctl-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-md);
+  padding: 13px 14px;
+  border-left: 4px solid var(--sev, var(--border-soft));
+}
+.ctl-row .actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.ctl-row .body { flex: 1; min-width: 0; }
+.ctl-row .headline {
+  font-size: 14.5px;
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  cursor: pointer;
+}
+.ctl-row .metaline { display: flex; flex-wrap: wrap; gap: 7px; align-items: center; margin-top: 7px; }
+
+@media (max-width: 620px) {
+  .ctl-row { flex-direction: column; }
+  .ctl-row .actions { width: 100%; justify-content: flex-start; }
+}
+
+.rank-badge {
+  width: 32px; height: 32px;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.07);
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+  font-size: 13px;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+.rank-badge.pinned { background: var(--accent-gold); color: #2a1c0a; }
+.rank-badge.demoted { background: rgba(255, 255, 255, 0.04); color: var(--text-dim); }
+
+.btn-danger { background: rgba(232, 86, 47, 0.16); border: 1px solid var(--danger); color: #ff9d85; }
+.btn-good { background: rgba(95, 217, 126, 0.14); border: 1px solid var(--accent-green); color: #b6f0c6; }
+.btn-gold { background: var(--accent-gold); color: #2a1c0a; }
+
+.table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.table th, .table td {
+  text-align: left;
+  padding: 10px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  vertical-align: top;
+}
+.table th {
+  font-size: 11px;
+  letter-spacing: 0.7px;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  position: sticky;
+  top: 0;
+  background: var(--bg-card);
+}
+.table td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.table-wrap {
+  background: var(--bg-card);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-md);
+  overflow: auto;
+  max-height: 60vh;
+}
+
+.bottleneck {
+  border-left: 4px solid var(--warn);
+  background: rgba(245, 148, 31, 0.08);
+}
+.bottleneck.flagged { border-left-color: var(--danger); background: rgba(232, 86, 47, 0.1); }
+.ratio {
+  font-size: 24px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.ctl-drawer {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  z-index: 50;
+  display: flex;
+  justify-content: flex-end;
+}
+/* A class-level `display` beats the user-agent's `[hidden] { display: none }`,
+   which would otherwise leave this overlay invisible but still swallowing every
+   click on the page behind it. */
+.ctl-drawer[hidden] { display: none; }
+.ctl-drawer-panel {
+  width: min(520px, 100%);
+  background: var(--bg-deep);
+  border-left: 1px solid var(--border-soft);
+  display: flex;
+  flex-direction: column;
+  animation: slideIn 0.24s ease;
+}
+@keyframes slideIn { from { transform: translateX(24px); opacity: 0.6; } }
+.ctl-drawer-body { flex: 1; padding: 4px 18px 30px; }
+
+.log-line {
+  display: grid;
+  grid-template-columns: 78px 1fr;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  font-size: 13px;
+}
+.log-line time { color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.log-line b { font-weight: 700; }
+
+.filters { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+.filters select, .filters input {
+  min-height: 38px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-sm);
+  padding: 8px 11px;
+  font-size: 13.5px;
+  outline: none;
+}
+.filters input { min-width: 170px; }
